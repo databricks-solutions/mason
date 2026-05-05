@@ -29,8 +29,9 @@ function initDomRefs() {
     dashboardBack: document.getElementById("dashboardBack"),
     dashboardWebview: document.getElementById("dashboardWebview"),
     sidebarSearch: document.getElementById("sidebarSearch"),
-    settingsModal: document.getElementById("settingsModal"),
-    settingsModalClose: document.getElementById("settingsModalClose"),
+    settingsView: document.getElementById("settingsView"),
+    settingsBtn: document.getElementById("settingsBtn"),
+    settingsViewClose: document.getElementById("settingsViewClose"),
     toolsModal: document.getElementById("toolsModal"),
     toolsModalList: document.getElementById("toolsModalList"),
     toolsModalClose: document.getElementById("toolsModalClose"),
@@ -370,18 +371,13 @@ function initEventListeners() {
     renderAttachmentChips();
   });
 
-  // Settings modal
+  // Settings view
   document.getElementById("menuSettings").addEventListener("click", () => {
     el.popupMenu.classList.remove("open");
-    el.gatewayUrlInput.value = mason.workspaceGatewayUrl;
-    el.autoLoadToggle.checked = mason.autoLoadTools;
-    updateToggleVisual();
-    populateDefaultModelSelect();
-    renderEndpointsList();
-    el.settingsModal.classList.add("open");
+    switchToSettingsView();
   });
-  el.settingsModalClose.addEventListener("click", () => el.settingsModal.classList.remove("open"));
-  el.settingsModal.addEventListener("click", (e) => { if (e.target === el.settingsModal) el.settingsModal.classList.remove("open"); });
+  el.settingsBtn.addEventListener("click", () => switchToSettingsView());
+  el.settingsViewClose.addEventListener("click", () => switchToChatsTab());
 
   el.gatewaySave.addEventListener("click", async () => {
     const url = el.gatewayUrlInput.value.trim().replace(/\/mlflow\/v1\/chat\/completions\/?$/i, "").replace(/\/+$/, "");
@@ -533,8 +529,7 @@ function initEventListeners() {
     await loadWorkspaceConfig();
 
     if (!mason.workspaceGatewayUrl) {
-      mason.el.gatewayUrlInput.value = "";
-      mason.el.settingsModal.classList.add("open");
+      switchToSettingsView();
       addMessageEl("error", `Profile "${profileName}" has no AI Gateway URL configured. Enter one in Settings to start chatting.`);
     }
 
@@ -561,18 +556,18 @@ function initEventListeners() {
     if (mod && e.key === "l") { e.preventDefault(); el.input.focus(); }
 
     // Cmd+, — open settings
-    if (mod && e.key === ",") { e.preventDefault(); el.settingsModal.classList.add("open"); }
+    if (mod && e.key === ",") { e.preventDefault(); switchToSettingsView(); }
 
     // Cmd+B — toggle sidebar
     if (mod && e.key === "b") { e.preventDefault(); el.sidebar.classList.toggle("hidden"); }
 
-    // Escape — close any open modal or popup
+    // Escape — close any open modal/popup; if on settings view, return to chats
     if (e.key === "Escape") {
       el.popupMenu.classList.remove("open");
       el.modelMenu.classList.remove("open");
       el.toolsModal.classList.remove("open");
-      el.settingsModal.classList.remove("open");
       el.mcpModal.classList.remove("open");
+      if (mason.currentView === "settings") switchToChatsTab();
     }
   });
 }
@@ -589,8 +584,7 @@ async function initApp() {
   await loadWorkspaceConfig();
 
   if (!mason.workspaceGatewayUrl) {
-    mason.el.gatewayUrlInput.value = "";
-    mason.el.settingsModal.classList.add("open");
+    switchToSettingsView();
   }
 
   refreshHistory();

@@ -12,6 +12,8 @@ function switchToChatsTab() {
   document.querySelector(".main").style.display = "";
   mason.el.dashboardView.classList.remove("visible");
   mason.el.dashboardWebview.style.display = "none";
+  if (mason.el.settingsView) mason.el.settingsView.classList.remove("visible");
+  if (mason.el.settingsViewClose) mason.el.settingsViewClose.style.display = "none";
 }
 
 function switchToDashboardsTab() {
@@ -26,7 +28,25 @@ function switchToDashboardsTab() {
   document.querySelector(".main").style.display = "none";
   mason.el.dashboardView.classList.remove("visible");
   mason.el.dashboardWebview.style.display = "none";
+  if (mason.el.settingsView) mason.el.settingsView.classList.remove("visible");
+  if (mason.el.settingsViewClose) mason.el.settingsViewClose.style.display = "none";
   loadDashboards();
+}
+
+function switchToSettingsView() {
+  mason.currentView = "settings";
+  // Sync settings UI with current state
+  mason.el.gatewayUrlInput.value = mason.workspaceGatewayUrl || "";
+  mason.el.autoLoadToggle.checked = mason.autoLoadTools;
+  if (typeof updateToggleVisual === "function") updateToggleVisual();
+  if (typeof populateDefaultModelSelect === "function") populateDefaultModelSelect();
+  if (typeof renderEndpointsList === "function") renderEndpointsList();
+  // Hide other panes
+  document.querySelector(".main").style.display = "none";
+  mason.el.dashboardView.classList.remove("visible");
+  mason.el.dashboardWebview.style.display = "none";
+  mason.el.settingsView.classList.add("visible");
+  mason.el.settingsViewClose.style.display = "inline-block";
 }
 
 function openDashboard(dashboard) {
