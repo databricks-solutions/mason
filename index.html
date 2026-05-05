@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self' https://*.cloud.databricks.com https://*.azuredatabricks.net https://*.staging.cloud.databricks.com https://*.databricksapps.com; frame-src https://*.cloud.databricks.com https://*.azuredatabricks.net https://*.staging.cloud.databricks.com; img-src 'self' data:;">
+    <title>Mason</title>
+    <link id="hljs-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+    <link id="hljs-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" disabled />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+  <body>
+    <!-- Sidebar -->
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-nav">
+        <button class="sidebar-nav-btn active" id="navChats">Chats</button>
+        <button class="sidebar-nav-btn" id="navDashboards">Dashboards</button>
+      </div>
+      <div style="padding:0 10px 8px;">
+        <input type="text" id="sidebarSearch" placeholder="Search..." style="width:100%;padding:6px 10px;border:1px solid #ddd;border-radius:8px;font-size:0.82rem;background:#fff;color:#333;outline:none;transition:border-color 0.2s,background 0.2s,color 0.2s;" />
+      </div>
+      <button class="sidebar-new-chat" id="newChat">+ New Chat</button>
+      <div class="history-list" id="historyList"></div>
+      <div class="dashboard-list" id="dashboardList"></div>
+
+      <div class="sidebar-settings">
+        <label>Profile</label>
+        <select id="profile"></select>
+        <div class="settings-row">
+          <label>Theme</label>
+          <button class="settings-toggle" id="themeToggle"><img src="icons/moon.webp" alt="" style="width:22px;height:22px;vertical-align:middle;"></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+      <div class="topbar">
+        <div class="topbar-left">
+          <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar" aria-label="Toggle sidebar">&#9776;</button>
+          <h2>MASON</h2>
+        </div>
+      </div>
+
+      <div class="main">
+        <div class="messages" id="messages">
+          <div class="welcome">
+            <img class="welcome-logo" src="icons/Databricks-Emblem.png" alt="" />
+            <div class="welcome-title">What can I help with?</div>
+            <div class="welcome-sub">Pick a model and start chatting.</div>
+          </div>
+        </div>
+
+        <div class="input-area">
+          <div class="input-box">
+            <div id="attachmentChips" class="attachment-chips"></div>
+            <textarea id="input" rows="2" placeholder="Message Mason..." aria-label="Chat message input"></textarea>
+            <div class="input-bottom">
+              <div class="input-bottom-left">
+                <button class="plus-btn" id="plusBtn" title="Options" aria-label="Open options menu" aria-haspopup="menu">+</button>
+                <div id="mcpBadges"></div>
+                <!-- Popup menu -->
+                <div class="popup-menu" id="popupMenu" role="menu" aria-label="Options">
+                  <div class="popup-item" role="menuitem" id="menuMcp">
+                    <span class="popup-item-icon">&#9881;</span>
+                    <span class="popup-item-text">MCP Servers</span>
+                  </div>
+                  <div class="popup-item" role="menuitem" id="menuTools">
+                    <span class="popup-item-icon">&#128295;</span>
+                    <span class="popup-item-text">Tools</span>
+                  </div>
+                  <div class="popup-item" role="menuitem" id="menuSettings">
+                    <span class="popup-item-icon">&#9881;</span>
+                    <span class="popup-item-text">Settings</span>
+                  </div>
+                  <div class="popup-item" role="menuitem" id="menuUploadFiles">
+                    <span class="popup-item-icon">&#128206;</span>
+                    <span class="popup-item-text">Upload Files</span>
+                  </div>
+                  <div class="popup-divider"></div>
+                  <div class="popup-item" role="menuitem" id="menuAuth">
+                    <span class="popup-item-icon">&#128274;</span>
+                    <span class="popup-item-text" id="menuAuthText">Authenticate</span>
+                  </div>
+                </div>
+              </div>
+              <div class="input-bottom-right">
+                <div class="model-picker">
+                  <button class="model-select-btn" id="modelBtn" aria-label="Select AI model" aria-haspopup="listbox">
+                    <span id="modelBtnLabel">Claude Sonnet 4</span>
+                    <span class="chevron">&#9650;</span>
+                  </button>
+                  <div class="model-menu" id="modelMenu" role="listbox" aria-label="Model selection"></div>
+                </div>
+                <button class="send-btn" id="send" title="Send" aria-label="Send message">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dashboard view (hidden by default) -->
+      <div class="dashboard-view" id="dashboardView">
+        <button class="dashboard-back" id="dashboardBack">&#8592; Back to list</button>
+        <webview id="dashboardWebview" src="about:blank" style="flex:1;"></webview>
+      </div>
+    </div>
+
+    <!-- Tools Modal -->
+    <div class="modal-overlay" id="toolsModal" role="dialog" aria-modal="true" aria-labelledby="toolsModalTitle">
+      <div class="modal">
+        <h3 id="toolsModalTitle">Available Tools</h3>
+        <div id="toolsModalList" style="max-height:400px;overflow-y:auto;margin-bottom:12px;"></div>
+        <div class="modal-btns">
+          <button class="modal-btn secondary" id="toolsModalClose">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+      <div class="modal" style="min-width:450px;">
+        <h3 id="settingsModalTitle">Settings</h3>
+        <div style="margin-bottom:14px;">
+          <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">AI Gateway URL</div>
+          <div style="display:flex;gap:6px;margin-bottom:12px;">
+            <input class="modal-input" id="gatewayUrlInput" type="text" placeholder="https://1234567890.ai-gateway.cloud.databricks.com" style="margin-bottom:0;flex:1;" />
+            <button class="modal-btn primary" id="gatewaySave">Save</button>
+          </div>
+        </div>
+        <div style="margin-bottom:14px;">
+          <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">Custom Model Endpoints</div>
+          <div id="endpointsList" style="margin-bottom:10px;"></div>
+          <div style="display:flex;gap:6px;margin-bottom:6px;">
+            <input class="modal-input" id="endpointModel" type="text" placeholder="Model ID (e.g. mason)" style="margin-bottom:0;flex:1;" />
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:6px;">
+            <input class="modal-input" id="endpointName" type="text" placeholder="Display name — optional (defaults to Model ID)" style="margin-bottom:0;flex:1;" />
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:6px;">
+            <input class="modal-input" id="endpointUrl" type="text" placeholder="Gateway URL — optional (defaults to current gateway)" style="margin-bottom:0;flex:1;" />
+          </div>
+          <button class="modal-btn primary" id="endpointAdd" style="width:100%;">Add Endpoint</button>
+        </div>
+        <div style="margin-bottom:14px;">
+          <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">Default Model</div>
+          <select class="modal-input" id="defaultModelSelect" style="margin-bottom:4px;cursor:pointer;"></select>
+          <div style="font-size:0.72rem;opacity:0.35;">Auto-selected on app start and profile switch</div>
+        </div>
+        <div style="margin-bottom:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;">
+            <div>
+              <div style="font-size:0.85rem;font-weight:500;">Auto-load MCP tools</div>
+              <div style="font-size:0.75rem;opacity:0.45;">When on, all MCP tools are enabled by default on connect</div>
+            </div>
+            <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;">
+              <input type="checkbox" id="autoLoadToolsToggle" style="opacity:0;width:0;height:0;">
+              <span id="autoLoadToolsTrack" style="position:absolute;inset:0;background:#ccc;border-radius:12px;transition:background 0.2s;"></span>
+              <span id="autoLoadToolsThumb" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-btns">
+          <button class="modal-btn secondary" id="settingsModalClose">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MCP Modal -->
+    <div class="modal-overlay" id="mcpModal" role="dialog" aria-modal="true" aria-labelledby="mcpModalTitle">
+      <div class="modal" style="min-width:480px;">
+        <h3 id="mcpModalTitle">MCP Servers</h3>
+        <div class="mcp-server-list" id="mcpServerList"></div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px;">
+          <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;">Unity Catalog</div>
+          <button class="modal-btn secondary" id="ucMcpRefresh" style="padding:2px 10px;font-size:0.72rem;">Refresh</button>
+        </div>
+        <input class="modal-input" id="ucMcpSearch" type="text" placeholder="Search connections..." style="margin-bottom:6px;" />
+        <div id="ucMcpList" style="max-height:240px;overflow-y:auto;margin-bottom:12px;"></div>
+
+        <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin:12px 0 6px;">Remote (HTTP)</div>
+        <input class="modal-input" id="mcpUrlInput" type="text" placeholder="https://your-app.databricksapps.com/mcp" />
+        <button class="modal-btn primary" id="mcpModalConnect" style="width:100%;margin-bottom:12px;">Connect Remote</button>
+
+        <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin:12px 0 6px;">Local (stdio)</div>
+        <div style="display:flex;gap:6px;margin-bottom:6px;">
+          <input class="modal-input" id="mcpStdioPath" type="text" placeholder="Path to .mcp.json (e.g. /Users/you/project/.mcp.json)" style="margin-bottom:0;flex:1;" />
+          <button class="modal-btn secondary" id="mcpStdioBrowse">Browse</button>
+        </div>
+        <button class="modal-btn primary" id="mcpStdioLoad" style="width:100%;margin-bottom:12px;">Load from file</button>
+
+        <div class="modal-btns">
+          <button class="modal-btn secondary" id="mcpModalClose">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="js/state.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/markdown.js"></script>
+    <script src="js/messages.js"></script>
+    <script src="js/history.js"></script>
+    <script src="js/tools.js"></script>
+    <script src="js/models.js"></script>
+    <script src="js/mcp.js"></script>
+    <script src="js/dashboards.js"></script>
+    <script src="js/chat.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>
