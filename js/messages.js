@@ -69,6 +69,7 @@ function renderMessages() {
 function newChat() {
   mason.history = [];
   mason.currentChatId = null;
+  if (mason.currentView !== "chat" && typeof switchToChatsTab === "function") switchToChatsTab();
   showWelcome();
   refreshHistory();
 }

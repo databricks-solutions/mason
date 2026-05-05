@@ -29,8 +29,13 @@
         <label>Profile</label>
         <select id="profile"></select>
         <div class="settings-row">
-          <label>Theme</label>
-          <button class="settings-toggle" id="themeToggle"><img src="icons/moon.webp" alt="" style="width:22px;height:22px;vertical-align:middle;"></button>
+          <button class="settings-toggle" id="settingsBtn" title="Settings" aria-label="Open settings">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+          <button class="settings-toggle" id="themeToggle" title="Toggle theme" aria-label="Toggle theme"><img src="icons/moon.webp" alt="" style="width:22px;height:22px;vertical-align:middle;"></button>
         </div>
       </div>
     </div>
@@ -41,6 +46,9 @@
         <div class="topbar-left">
           <button class="icon-btn" id="sidebarToggle" title="Toggle sidebar" aria-label="Toggle sidebar">&#9776;</button>
           <h2>MASON</h2>
+        </div>
+        <div class="topbar-right">
+          <button class="icon-btn settings-view-close" id="settingsViewClose" title="Close settings" aria-label="Close settings">&times;</button>
         </div>
       </div>
 
@@ -108,6 +116,52 @@
         <button class="dashboard-back" id="dashboardBack">&#8592; Back to list</button>
         <webview id="dashboardWebview" src="about:blank" style="flex:1;"></webview>
       </div>
+
+      <!-- Settings view (hidden by default) -->
+      <div class="settings-view" id="settingsView">
+        <div class="settings-view-inner">
+          <h3 id="settingsViewTitle">Settings</h3>
+          <div style="margin-bottom:18px;">
+            <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">AI Gateway URL</div>
+            <div style="display:flex;gap:6px;margin-bottom:12px;">
+              <input class="modal-input" id="gatewayUrlInput" type="text" placeholder="https://1234567890.ai-gateway.cloud.databricks.com" style="margin-bottom:0;flex:1;" />
+              <button class="modal-btn primary" id="gatewaySave">Save</button>
+            </div>
+          </div>
+          <div style="margin-bottom:18px;">
+            <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">Custom Model Endpoints</div>
+            <div id="endpointsList" style="margin-bottom:10px;"></div>
+            <div style="display:flex;gap:6px;margin-bottom:6px;">
+              <input class="modal-input" id="endpointModel" type="text" placeholder="Model ID (e.g. mason)" style="margin-bottom:0;flex:1;" />
+            </div>
+            <div style="display:flex;gap:6px;margin-bottom:6px;">
+              <input class="modal-input" id="endpointName" type="text" placeholder="Display name — optional (defaults to Model ID)" style="margin-bottom:0;flex:1;" />
+            </div>
+            <div style="display:flex;gap:6px;margin-bottom:6px;">
+              <input class="modal-input" id="endpointUrl" type="text" placeholder="Gateway URL — optional (defaults to current gateway)" style="margin-bottom:0;flex:1;" />
+            </div>
+            <button class="modal-btn primary" id="endpointAdd" style="width:100%;">Add Endpoint</button>
+          </div>
+          <div style="margin-bottom:18px;">
+            <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">Default Model</div>
+            <select class="modal-input" id="defaultModelSelect" style="margin-bottom:4px;cursor:pointer;"></select>
+            <div style="font-size:0.72rem;opacity:0.35;">Auto-selected on app start and profile switch</div>
+          </div>
+          <div style="margin-bottom:18px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;">
+              <div>
+                <div style="font-size:0.85rem;font-weight:500;">Auto-load MCP tools</div>
+                <div style="font-size:0.75rem;opacity:0.45;">When on, all MCP tools are enabled by default on connect</div>
+              </div>
+              <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;">
+                <input type="checkbox" id="autoLoadToolsToggle" style="opacity:0;width:0;height:0;">
+                <span id="autoLoadToolsTrack" style="position:absolute;inset:0;background:#ccc;border-radius:12px;transition:background 0.2s;"></span>
+                <span id="autoLoadToolsThumb" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Tools Modal -->
@@ -121,54 +175,6 @@
       </div>
     </div>
 
-    <!-- Settings Modal -->
-    <div class="modal-overlay" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
-      <div class="modal" style="min-width:450px;">
-        <h3 id="settingsModalTitle">Settings</h3>
-        <div style="margin-bottom:14px;">
-          <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">AI Gateway URL</div>
-          <div style="display:flex;gap:6px;margin-bottom:12px;">
-            <input class="modal-input" id="gatewayUrlInput" type="text" placeholder="https://1234567890.ai-gateway.cloud.databricks.com" style="margin-bottom:0;flex:1;" />
-            <button class="modal-btn primary" id="gatewaySave">Save</button>
-          </div>
-        </div>
-        <div style="margin-bottom:14px;">
-          <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">Custom Model Endpoints</div>
-          <div id="endpointsList" style="margin-bottom:10px;"></div>
-          <div style="display:flex;gap:6px;margin-bottom:6px;">
-            <input class="modal-input" id="endpointModel" type="text" placeholder="Model ID (e.g. mason)" style="margin-bottom:0;flex:1;" />
-          </div>
-          <div style="display:flex;gap:6px;margin-bottom:6px;">
-            <input class="modal-input" id="endpointName" type="text" placeholder="Display name — optional (defaults to Model ID)" style="margin-bottom:0;flex:1;" />
-          </div>
-          <div style="display:flex;gap:6px;margin-bottom:6px;">
-            <input class="modal-input" id="endpointUrl" type="text" placeholder="Gateway URL — optional (defaults to current gateway)" style="margin-bottom:0;flex:1;" />
-          </div>
-          <button class="modal-btn primary" id="endpointAdd" style="width:100%;">Add Endpoint</button>
-        </div>
-        <div style="margin-bottom:14px;">
-          <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">Default Model</div>
-          <select class="modal-input" id="defaultModelSelect" style="margin-bottom:4px;cursor:pointer;"></select>
-          <div style="font-size:0.72rem;opacity:0.35;">Auto-selected on app start and profile switch</div>
-        </div>
-        <div style="margin-bottom:14px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;">
-            <div>
-              <div style="font-size:0.85rem;font-weight:500;">Auto-load MCP tools</div>
-              <div style="font-size:0.75rem;opacity:0.45;">When on, all MCP tools are enabled by default on connect</div>
-            </div>
-            <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;">
-              <input type="checkbox" id="autoLoadToolsToggle" style="opacity:0;width:0;height:0;">
-              <span id="autoLoadToolsTrack" style="position:absolute;inset:0;background:#ccc;border-radius:12px;transition:background 0.2s;"></span>
-              <span id="autoLoadToolsThumb" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
-            </label>
-          </div>
-        </div>
-        <div class="modal-btns">
-          <button class="modal-btn secondary" id="settingsModalClose">Close</button>
-        </div>
-      </div>
-    </div>
 
     <!-- MCP Modal -->
     <div class="modal-overlay" id="mcpModal" role="dialog" aria-modal="true" aria-labelledby="mcpModalTitle">
