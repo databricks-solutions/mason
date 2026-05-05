@@ -1,0 +1,8 @@
+# Workflow files and dependency manifests gate the supply chain — require a
+# named reviewer (the maintainer) before any change merges.
+.github/workflows/**         @DoyleDev
+.github/dependabot.yml       @DoyleDev
+package.json                 @DoyleDev
+package-lock.json            @DoyleDev
+release-please-config.json   @DoyleDev
+.release-please-manifest.json @DoyleDev
