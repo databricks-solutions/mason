@@ -280,6 +280,23 @@ Until these are set, `build:mac` will fail at the notarize step. Windows/Linux b
 
 There's no manual `npm version` step. Just merge the release PR that release-please opens. The rest is automated.
 
+### Supply-chain hardening
+
+Org policy requires Actions and dependencies to be locked down:
+
+- **Actions pinned by full commit SHA** (not tags) in all three workflows. Comment alongside notes the human-readable tag, e.g. `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pin)`.
+- **Dependabot** ([.github/dependabot.yml](.github/dependabot.yml)) opens weekly PRs to rotate Action SHAs and bump npm packages. Both groups land as `chore(deps): ...` so release-please ignores them in changelog.
+- **Permissions least-privilege.** Each workflow declares `permissions: contents: read` at the top. Jobs that need to write (release-please, the three release-build jobs that upload installers) widen `contents: write` only on themselves, never workflow-wide.
+- **CODEOWNERS** ([.github/CODEOWNERS](.github/CODEOWNERS)) gates changes to `.github/workflows/**`, `.github/dependabot.yml`, `package.json`, `package-lock.json`, and the release-please manifests on the maintainer.
+- **`npm audit signatures`** runs after every `npm ci` to verify package registry signatures.
+- **Exact npm versions** in [package.json](package.json) (no `^` or `~`). `package-lock.json` is the source of truth; CI uses `npm ci` only.
+
+### Deferred hardening (track but not blocking)
+
+- **Split `build-mac` into unsigned-build + signing jobs** so `MAC_CERT_*` / `APPLE_*` secrets aren't in scope while `npm ci` runs untrusted transitive deps. Requires moving signing out of `electron-builder` (use `--dir` then `codesign` + `notarytool`).
+- **SLSA build provenance attestations** on tag releases (`actions/attest-build-provenance`).
+- **Tag protection rules** on `v*` (Settings → Tags → Protect) so only maintainers can create release tags.
+
 ## npm Note
 
 Databricks npm proxy (`npm-proxy.dev.databricks.com`) required. See go/npm-registry-access.

@@ -5,21 +5,30 @@ on:
     branches:
       - main
 
+# Default to read-only for the entire workflow. PR builds must not write
+# to the repo, push tags, or call mutating APIs.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pin)
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4 (pin)
         with:
           node-version: "20"
           cache: "npm"
       - run: npm ci
+      - name: Verify npm package signatures
+        run: npm audit signatures
       - name: Build (no publish, no signing)
         run: npm run dist
         env:
