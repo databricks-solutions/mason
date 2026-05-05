@@ -887,11 +887,23 @@ ipcMain.handle("list-uc-connections", async (_event, { host, token }) => {
     // Filter to HTTP connections (required for external MCP proxy)
     const connections = allConnections
       .filter((c) => c.connection_type === "HTTP")
-      .map((c) => ({
-        name: c.name,
-        comment: c.comment || "",
-      }));
+      .map((c) => {
+        // HTTP connections store the upstream service URL in options. The exact key
+        // varies; check the common ones. Strip trailing slashes for clean joining.
+        const opts = c.options || c.properties || {};
+        const rawHost =
+          opts.host || opts.base_url || opts.host_url || opts.url || opts.endpoint || "";
+        const directHost = rawHost ? rawHost.replace(/\/+$/, "") : "";
+        return {
+          name: c.name,
+          comment: c.comment || "",
+          directHost,
+        };
+      });
     console.log(`[UC] Found ${connections.length} HTTP connections (of ${allConnections.length} total)`);
+    for (const c of connections) {
+      console.log(`[UC]   - ${c.name} -> ${c.directHost || "(no host; will use UC proxy)"}`);
+    }
     return connections;
   } catch (err) {
     console.error(`[UC] Error listing connections:`, err.message);

@@ -127,12 +127,17 @@ function renderUcMcpList(connections, filter = "") {
     return conn.name.toLowerCase().includes(query) || (conn.comment || "").toLowerCase().includes(query);
   });
 
+  // Resolve the MCP URL for a UC connection: prefer the connection's own host
+  // (e.g. a Databricks App at *.databricksapps.com), fall back to the UC external proxy.
+  const mcpUrlFor = (conn) => {
+    if (conn.directHost) return `${conn.directHost.replace(/\/+$/, "")}/mcp`;
+    return `${host}/api/2.0/mcp/external/${encodeURIComponent(conn.name)}`;
+  };
+
   // Sort: connected first, then alphabetical
   const sorted = filtered.sort((a, b) => {
-    const aUrl = `${host}/api/2.0/mcp/external/${encodeURIComponent(a.name)}`;
-    const bUrl = `${host}/api/2.0/mcp/external/${encodeURIComponent(b.name)}`;
-    const aConn = mason.mcpServers.some((s) => s.url === aUrl);
-    const bConn = mason.mcpServers.some((s) => s.url === bUrl);
+    const aConn = mason.mcpServers.some((s) => s.url === mcpUrlFor(a));
+    const bConn = mason.mcpServers.some((s) => s.url === mcpUrlFor(b));
     if (aConn !== bConn) return aConn ? -1 : 1;
     return a.name.localeCompare(b.name);
   });
@@ -141,7 +146,7 @@ function renderUcMcpList(connections, filter = "") {
   const visible = sorted.slice(0, MAX_VISIBLE);
 
   for (const conn of visible) {
-    const mcpUrl = `${host}/api/2.0/mcp/external/${encodeURIComponent(conn.name)}`;
+    const mcpUrl = mcpUrlFor(conn);
     const isConnected = mason.mcpServers.some((s) => s.url === mcpUrl);
 
     const div = document.createElement("div");
@@ -262,7 +267,26 @@ async function autoConnectMcp() {
       await connectMcpServer(url);
       console.log(`[MCP UI] Auto-connected HTTP: ${url}`);
     } catch (e) {
-      console.error(`[MCP UI] Auto-connect failed for ${url}:`, e.message);
+      // UC external MCP needs per-user OAuth on the underlying connection.
+      // On 401/403, prompt once to authorize, then retry.
+      const ucMatch = url.match(/^(https:\/\/[^/]+)\/api\/2\.0\/mcp\/external\/([^/?#]+)/);
+      const isAuthError = e.message.includes("401") || e.message.includes("403") || e.message.includes("Unauthorized");
+      if (ucMatch && isAuthError) {
+        const [, host, name] = ucMatch;
+        const decoded = decodeURIComponent(name);
+        console.log(`[MCP UI] Auto-connect 401 for UC connection "${decoded}" — opening authorize window`);
+        try {
+          const authUrl = `${host}/explore/connections/${encodeURIComponent(decoded)}`;
+          await window.api.openAuthWindow({ url: authUrl, title: `Authorize ${decoded}` });
+          await connectMcpServer(url);
+          console.log(`[MCP UI] Auto-connected after authorize: ${url}`);
+          continue;
+        } catch (retryErr) {
+          console.error(`[MCP UI] Auto-connect still failed after authorize for ${url}:`, retryErr.message);
+        }
+      } else {
+        console.error(`[MCP UI] Auto-connect failed for ${url}:`, e.message);
+      }
     }
   }
 
