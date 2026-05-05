@@ -925,7 +925,13 @@ ipcMain.handle("discover-models", async (_event, { host, gatewayUrl, token }) =>
     // derived from the foundation model's api_types — newer GPT models only support
     // the Responses API, while most others support Chat Completions.
     const models = endpoints
-      .filter((e) => e.endpoint_type === "FOUNDATION_MODEL_API" && e.task && e.task.includes("chat"))
+      .filter((e) =>
+        e.endpoint_type === "FOUNDATION_MODEL_API"
+        && e.task && e.task.includes("chat")
+        // Skip endpoints that exist but aren't actually usable (workspace
+        // hasn't enabled them yet, config update in progress, etc.).
+        && e.state?.ready === "READY"
+      )
       .map((e) => {
         const fm = e.config?.served_entities?.[0]?.foundation_model || {};
         const apiTypes = fm.api_types || [];
@@ -1073,6 +1079,11 @@ ipcMain.handle("chat", async (_event, { token, model, messages, tools, gateway, 
 
   if (!res.ok) {
     const text = await res.text();
+    // Friendlier error for the common "endpoint listed but not enabled" case —
+    // the picker showed the model but the workspace can't actually invoke it.
+    if (res.status === 404 && /is not enabled/i.test(text)) {
+      throw new Error(`The selected model "${model}" isn't enabled in this workspace. Pick a different model from the dropdown, or have a workspace admin enable it.`);
+    }
     throw new Error(`API ${res.status}: ${text}`);
   }
 

@@ -26,9 +26,26 @@ async function loadChat(id) {
   if (!data) return;
   mason.currentChatId = id;
   mason.history = data.messages;
-  selectModelByValue(data.model);
+  // Only restore the saved model if this workspace actually has it. Otherwise
+  // keep whatever's already selected — the saved value can be stale (loaded
+  // from a different workspace, or the endpoint was disabled since).
+  if (data.model && isModelAvailable(data.model)) {
+    selectModelByValue(data.model);
+  }
   renderMessages();
   refreshHistory();
+}
+
+function isModelAvailable(modelValue) {
+  if (!modelValue) return false;
+  if (modelValue.startsWith("custom:")) {
+    const id = modelValue.replace("custom:", "");
+    return mason.customEndpoints.some((e) => e.modelId === id);
+  }
+  for (const g of mason.discoveredModels) {
+    if (g.models.some((m) => m.value === modelValue)) return true;
+  }
+  return false;
 }
 
 async function saveCurrentChat() {
