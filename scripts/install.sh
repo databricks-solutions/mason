@@ -119,4 +119,58 @@ xattr -dr com.apple.quarantine "$DEST_APP" 2>/dev/null || true
 touch "$DEST_APP"
 
 ok "Installed $APP_NAME.app to $INSTALL_DIR"
+
+# --- Optional: install Databricks CLI to ~/.mason/bin ---
+# Mason can talk to the AI Gateway only with the Databricks CLI present (it uses
+# the CLI to mint OAuth tokens). If a system CLI is already on PATH, leave it
+# alone — brew/winget installs are easier to keep up to date that way.
+MASON_BIN="$HOME/.mason/bin"
+if command -v databricks >/dev/null 2>&1; then
+  ok "Databricks CLI already installed at $(command -v databricks)"
+else
+  log "Databricks CLI not found — installing to $MASON_BIN"
+  case "$ARCH" in
+    arm64) CLI_ARCH="arm64" ;;
+    x86_64) CLI_ARCH="amd64" ;;
+    *) err "Unsupported architecture for Databricks CLI: $ARCH" ;;
+  esac
+  CLI_META="$(curl -fsSL "https://api.github.com/repos/databricks/cli/releases/latest")" || err "Failed to fetch Databricks CLI release metadata."
+  CLI_VER="$(printf '%s' "$CLI_META" | grep -o '"tag_name": *"v[^"]*"' | head -n1 | sed -E 's/.*"v([^"]+)"/\1/')"
+  [[ -n "$CLI_VER" ]] || err "Could not parse Databricks CLI version."
+  CLI_ASSET="databricks_cli_${CLI_VER}_darwin_${CLI_ARCH}.zip"
+  CLI_URL="$(printf '%s' "$CLI_META" \
+    | grep -o '"browser_download_url": *"[^"]*'"$CLI_ASSET"'"' \
+    | head -n1 \
+    | sed -E 's/.*"(https:[^"]+)"$/\1/')"
+  [[ -n "$CLI_URL" ]] || err "No Databricks CLI asset for darwin_${CLI_ARCH} in v${CLI_VER}."
+
+  CLI_TMP="$(mktemp -d -t mason-cli)"
+  CLI_ZIP="$CLI_TMP/$CLI_ASSET"
+  log "Downloading $CLI_ASSET..."
+  curl -fL --progress-bar -o "$CLI_ZIP" "$CLI_URL" || err "Databricks CLI download failed."
+  unzip -oq "$CLI_ZIP" -d "$CLI_TMP" || err "Failed to extract Databricks CLI."
+
+  mkdir -p "$MASON_BIN"
+  if [[ -f "$CLI_TMP/databricks" ]]; then
+    mv "$CLI_TMP/databricks" "$MASON_BIN/databricks"
+  else
+    # Some archives nest the binary one level deeper.
+    NESTED="$(find "$CLI_TMP" -maxdepth 2 -name databricks -type f | head -n1)"
+    [[ -n "$NESTED" ]] || err "Databricks binary not found in archive."
+    mv "$NESTED" "$MASON_BIN/databricks"
+  fi
+  chmod +x "$MASON_BIN/databricks"
+  rm -rf "$CLI_TMP"
+
+  # Save the path so Mason's main.js resolver finds it directly.
+  mkdir -p "$HOME/.mason/config"
+  printf '{"path":"%s","version":"%s"}\n' "$MASON_BIN/databricks" "$CLI_VER" > "$HOME/.mason/config/cli_path.json"
+
+  ok "Databricks CLI v${CLI_VER} installed at $MASON_BIN/databricks"
+  case ":$PATH:" in
+    *":$MASON_BIN:"*) ;;
+    *) log "(Optional) Add $MASON_BIN to your PATH if you want to use 'databricks' from the terminal." ;;
+  esac
+fi
+
 ok "Launch with: open -a $APP_NAME"

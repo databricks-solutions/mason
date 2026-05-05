@@ -28,6 +28,7 @@ function initDomRefs() {
     dashboardView: document.getElementById("dashboardView"),
     dashboardBack: document.getElementById("dashboardBack"),
     dashboardWebview: document.getElementById("dashboardWebview"),
+    onboardingView: document.getElementById("onboardingView"),
     sidebarSearch: document.getElementById("sidebarSearch"),
     settingsView: document.getElementById("settingsView"),
     settingsBtn: document.getElementById("settingsBtn"),
@@ -36,6 +37,12 @@ function initDomRefs() {
     toolsModalList: document.getElementById("toolsModalList"),
     toolsModalClose: document.getElementById("toolsModalClose"),
     endpointsList: document.getElementById("endpointsList"),
+    profilesList: document.getElementById("profilesList"),
+    profileHostInput: document.getElementById("profileHostInput"),
+    profileNameInput: document.getElementById("profileNameInput"),
+    profileAddBtn: document.getElementById("profileAddBtn"),
+    profileAddError: document.getElementById("profileAddError"),
+    cliStatus: document.getElementById("cliStatus"),
     endpointModel: document.getElementById("endpointModel"),
     endpointName: document.getElementById("endpointName"),
     endpointUrl: document.getElementById("endpointUrl"),
@@ -79,13 +86,20 @@ let profilesLoaded = false;
 async function loadProfiles() {
   if (profilesLoaded) return;
   profilesLoaded = true;
+  await reloadProfiles();
+}
+
+// Re-read ~/.databrickscfg and rebuild the sidebar dropdown. Used after
+// onboarding adds the first profile, after Settings → Workspaces add/remove,
+// and any other path that mutates the file.
+async function reloadProfiles(selectedName) {
   mason.profiles = await window.api.getProfiles();
   mason.el.profile.innerHTML = "";
   for (const p of mason.profiles) {
     const opt = document.createElement("option");
     opt.value = p.name;
     opt.textContent = p.name;
-    if (p.name === "DEFAULT") opt.selected = true;
+    if (selectedName ? p.name === selectedName : p.name === "DEFAULT") opt.selected = true;
     mason.el.profile.appendChild(opt);
   }
 }
@@ -180,6 +194,49 @@ function renderEndpointsList() {
 function updateToggleVisual() {
   mason.el.autoLoadTrack.style.background = mason.autoLoadTools ? "#4caf50" : "#ccc";
   mason.el.autoLoadThumb.style.transform = mason.autoLoadTools ? "translateX(20px)" : "translateX(0)";
+}
+
+// --- Settings: Workspaces ---
+
+async function renderProfilesList() {
+  const listEl = mason.el.profilesList;
+  if (!listEl) return;
+  listEl.innerHTML = "";
+  const current = currentProfileName();
+  for (const p of mason.profiles) {
+    const div = document.createElement("div");
+    div.className = "mcp-server-item";
+    const isActive = p.name === current;
+    div.innerHTML = `
+      <div class="mcp-server-item-info">
+        <span class="mcp-server-item-dot" style="background:${isActive ? "#4caf50" : "#999"};"></span>
+        <span class="mcp-server-item-name">${escapeHtml(p.name)}${isActive ? " (active)" : ""}</span>
+        <span class="mcp-server-item-tools">${escapeHtml(p.host)}</span>
+      </div>
+      <button class="mcp-server-remove" data-name="${escapeHtml(p.name)}" title="Remove">&times;</button>
+    `;
+    div.querySelector(".mcp-server-remove").addEventListener("click", async () => {
+      if (!confirm(`Remove profile "${p.name}" from ~/.databrickscfg?`)) return;
+      try {
+        await window.api.removeProfile(p.name);
+        await reloadProfiles();
+        await renderProfilesList();
+      } catch (e) {
+        alert(`Failed to remove profile: ${e.message}`);
+      }
+    });
+    listEl.appendChild(div);
+  }
+  if (mason.profiles.length === 0) {
+    listEl.innerHTML = '<div style="opacity:0.5;font-size:0.82rem;padding:4px 0;">No profiles yet — add one below.</div>';
+  }
+  // Refresh CLI status hint.
+  const cli = await window.api.detectCli();
+  if (mason.el.cliStatus) {
+    mason.el.cliStatus.textContent = cli.installed
+      ? `Databricks CLI: ${cli.path}`
+      : `Databricks CLI: not installed. New profiles will require it — restart Mason or reinstall to set it up.`;
+  }
 }
 
 // --- Tools modal ---
@@ -395,6 +452,40 @@ function initEventListeners() {
     await window.api.workspaceSave({ profile, config });
   });
 
+  el.profileAddBtn.addEventListener("click", async () => {
+    el.profileAddError.style.display = "none";
+    const host = el.profileHostInput.value.trim();
+    if (!host) {
+      el.profileAddError.style.display = "";
+      el.profileAddError.textContent = "Workspace URL is required.";
+      return;
+    }
+    if (!isValidDatabricksUrl(host)) {
+      el.profileAddError.style.display = "";
+      el.profileAddError.textContent = "URL must be https://*.databricks.com, *.azuredatabricks.net, or *.databricksapps.com.";
+      return;
+    }
+    let name = el.profileNameInput.value.trim();
+    if (!name) {
+      try { name = new URL(host).hostname.split(".")[0]; } catch (_) { name = "default"; }
+    }
+    el.profileAddBtn.disabled = true;
+    el.profileAddBtn.textContent = "Adding...";
+    try {
+      await window.api.addProfile({ name, host });
+      el.profileHostInput.value = "";
+      el.profileNameInput.value = "";
+      await reloadProfiles(name);
+      await renderProfilesList();
+    } catch (e) {
+      el.profileAddError.style.display = "";
+      el.profileAddError.textContent = e.message || "Failed to add profile.";
+    } finally {
+      el.profileAddBtn.disabled = false;
+      el.profileAddBtn.textContent = "Add Workspace";
+    }
+  });
+
   el.endpointAdd.addEventListener("click", async () => {
     const modelId = el.endpointModel.value.trim();
     if (!modelId) { alert("Model ID is required."); return; }
@@ -554,6 +645,16 @@ async function initApp() {
   initDashboardListener();
 
   await loadProfiles();
+
+  // First-launch path: no profiles in ~/.databrickscfg → walk through the
+  // onboarding wizard. The wizard finishes by calling loadWorkspaceConfig +
+  // autoConnectMcp itself, so we return early here.
+  if (!mason.profiles || mason.profiles.length === 0) {
+    await showOnboarding();
+    refreshHistory();
+    return;
+  }
+
   await loadWorkspaceConfig();
 
   refreshHistory();

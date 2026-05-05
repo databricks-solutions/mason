@@ -787,3 +787,114 @@
       .send-btn:not(:disabled):hover { background: #333; }
       body.dark .send-btn:not(:disabled):hover { background: #ccc; }
       .send-btn svg { width: 16px; height: 16px; }
+
+
+      /* ---- Onboarding view ---- */
+      .onboarding-view {
+        display: none;
+        flex: 1;
+        flex-direction: column;
+        width: 100%;
+        overflow-y: auto;
+      }
+      .onboarding-view.visible { display: flex; }
+      .onboarding-inner {
+        max-width: 560px;
+        width: 100%;
+        margin: 0 auto;
+        padding: 48px 28px 64px;
+      }
+      .onboarding-logo {
+        width: 56px;
+        height: 56px;
+        margin-bottom: 18px;
+        display: block;
+      }
+      .onboarding-title {
+        font-size: 1.6rem;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      .onboarding-sub {
+        font-size: 0.95rem;
+        opacity: 0.6;
+        margin-bottom: 28px;
+      }
+      .onboarding-steps {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .onboarding-step {
+        display: flex;
+        gap: 14px;
+        padding: 14px 16px;
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        background: #fff;
+        transition: opacity 0.2s, border-color 0.2s, background 0.2s;
+      }
+      body.dark .onboarding-step { background: #1f1f1f; border-color: #2e2e2e; }
+      .onboarding-step[data-state="pending"] { opacity: 0.5; }
+      .onboarding-step[data-state="active"] { border-color: #007aff; }
+      .onboarding-step[data-state="done"] { border-color: #4caf50; }
+      .onboarding-step-num {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: #e0e0e0;
+        color: #666;
+        font-size: 0.78rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      body.dark .onboarding-step-num { background: #333; color: #aaa; }
+      .onboarding-step[data-state="active"] .onboarding-step-num { background: #007aff; color: #fff; }
+      .onboarding-step[data-state="done"] .onboarding-step-num {
+        background: #4caf50; color: #fff;
+      }
+      .onboarding-step[data-state="done"] .onboarding-step-num::before { content: "✓"; }
+      .onboarding-step[data-state="done"] .onboarding-step-num > * { display: none; }
+      .onboarding-step-body { flex: 1; min-width: 0; }
+      .onboarding-step-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      .onboarding-step-detail {
+        font-size: 0.82rem;
+        opacity: 0.65;
+      }
+      .onboarding-progress {
+        margin-top: 10px;
+      }
+      .onboarding-progress-bar {
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(0,0,0,0.08);
+        overflow: hidden;
+      }
+      body.dark .onboarding-progress-bar { background: rgba(255,255,255,0.08); }
+      .onboarding-progress-fill {
+        height: 100%;
+        width: 0%;
+        background: #007aff;
+        transition: width 0.2s;
+      }
+      .onboarding-progress-text {
+        font-size: 0.75rem;
+        opacity: 0.6;
+        margin-top: 6px;
+      }
+      .onboarding-error {
+        margin-top: 8px;
+        font-size: 0.8rem;
+        color: #c00;
+      }
+      body.dark .onboarding-error { color: #ff6b6b; }

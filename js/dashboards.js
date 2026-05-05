@@ -14,6 +14,7 @@ function switchToChatsTab() {
   mason.el.dashboardWebview.style.display = "none";
   if (mason.el.settingsView) mason.el.settingsView.classList.remove("visible");
   if (mason.el.settingsViewClose) mason.el.settingsViewClose.style.display = "none";
+  if (mason.el.onboardingView) mason.el.onboardingView.classList.remove("visible");
 }
 
 function switchToDashboardsTab() {
@@ -46,6 +47,8 @@ function switchToSettingsView() {
   mason.el.dashboardWebview.style.display = "none";
   mason.el.settingsView.classList.add("visible");
   mason.el.settingsViewClose.style.display = "inline-block";
+  if (mason.el.onboardingView) mason.el.onboardingView.classList.remove("visible");
+  if (typeof renderProfilesList === "function") renderProfilesList();
 }
 
 function openDashboard(dashboard) {

@@ -117,10 +117,69 @@
         <webview id="dashboardWebview" src="about:blank" style="flex:1;"></webview>
       </div>
 
+      <!-- Onboarding view (hidden by default; shown when no profile exists) -->
+      <div class="onboarding-view" id="onboardingView">
+        <div class="onboarding-inner">
+          <img class="onboarding-logo" src="icons/Databricks-Emblem.png" alt="" />
+          <h1 class="onboarding-title">Welcome to Mason</h1>
+          <p class="onboarding-sub">Connect a Databricks workspace to start chatting.</p>
+
+          <ol class="onboarding-steps">
+            <li class="onboarding-step" id="onboardingStepCli" data-state="pending">
+              <div class="onboarding-step-num">1</div>
+              <div class="onboarding-step-body">
+                <div class="onboarding-step-title">Databricks CLI</div>
+                <div class="onboarding-step-detail" id="onboardingCliDetail">Checking…</div>
+                <button class="modal-btn primary" id="onboardingInstallCli" style="display:none;margin-top:8px;">Install Databricks CLI</button>
+                <div class="onboarding-progress" id="onboardingCliProgress" style="display:none;">
+                  <div class="onboarding-progress-bar"><div class="onboarding-progress-fill" id="onboardingCliProgressFill"></div></div>
+                  <div class="onboarding-progress-text" id="onboardingCliProgressText">Starting…</div>
+                </div>
+              </div>
+            </li>
+            <li class="onboarding-step" id="onboardingStepWorkspace" data-state="pending">
+              <div class="onboarding-step-num">2</div>
+              <div class="onboarding-step-body">
+                <div class="onboarding-step-title">Workspace</div>
+                <div class="onboarding-step-detail">Enter your Databricks workspace URL.</div>
+                <input class="modal-input" id="onboardingHost" type="url" placeholder="https://workspace.cloud.databricks.com" style="margin-top:8px;width:100%;" disabled />
+                <input class="modal-input" id="onboardingName" type="text" placeholder="Profile name (optional)" style="margin-top:6px;width:100%;" disabled />
+                <button class="modal-btn primary" id="onboardingSaveProfile" style="margin-top:8px;" disabled>Save workspace</button>
+                <div class="onboarding-error" id="onboardingProfileError" style="display:none;"></div>
+              </div>
+            </li>
+            <li class="onboarding-step" id="onboardingStepAuth" data-state="pending">
+              <div class="onboarding-step-num">3</div>
+              <div class="onboarding-step-body">
+                <div class="onboarding-step-title">Sign in</div>
+                <div class="onboarding-step-detail">Authorize Mason in your browser.</div>
+                <button class="modal-btn primary" id="onboardingSignIn" style="margin-top:8px;" disabled>Sign in to Databricks</button>
+                <div class="onboarding-error" id="onboardingAuthError" style="display:none;"></div>
+              </div>
+            </li>
+          </ol>
+        </div>
+      </div>
+
       <!-- Settings view (hidden by default) -->
       <div class="settings-view" id="settingsView">
         <div class="settings-view-inner">
           <h3 id="settingsViewTitle">Settings</h3>
+          <div style="margin-bottom:18px;">
+            <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">Workspaces</div>
+            <div id="profilesList" style="margin-bottom:10px;"></div>
+            <div id="addProfileForm">
+              <div style="display:flex;gap:6px;margin-bottom:6px;">
+                <input class="modal-input" id="profileHostInput" type="url" placeholder="https://workspace.cloud.databricks.com" style="margin-bottom:0;flex:1;" />
+              </div>
+              <div style="display:flex;gap:6px;margin-bottom:6px;">
+                <input class="modal-input" id="profileNameInput" type="text" placeholder="Profile name (optional)" style="margin-bottom:0;flex:1;" />
+              </div>
+              <button class="modal-btn primary" id="profileAddBtn" style="width:100%;">Add Workspace</button>
+              <div id="profileAddError" style="display:none;color:#c00;font-size:0.78rem;margin-top:6px;"></div>
+            </div>
+            <div id="cliStatus" style="font-size:0.72rem;opacity:0.55;margin-top:8px;"></div>
+          </div>
           <div style="margin-bottom:18px;">
             <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">Custom Model Endpoints</div>
             <div id="endpointsList" style="margin-bottom:10px;"></div>
@@ -208,6 +267,7 @@
     <script src="js/models.js"></script>
     <script src="js/mcp.js"></script>
     <script src="js/dashboards.js"></script>
+    <script src="js/onboarding.js"></script>
     <script src="js/chat.js"></script>
     <script src="js/app.js"></script>
   </body>

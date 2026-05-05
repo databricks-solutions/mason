@@ -37,4 +37,10 @@ contextBridge.exposeInMainWorld("api", {
   onDashboardsUpdated: (callback) => ipcRenderer.on("dashboards-updated", (_event, dashboards) => callback(dashboards)),
   listUcConnections: (params) => ipcRenderer.invoke("list-uc-connections", params),
   openAuthWindow: (params) => ipcRenderer.invoke("open-auth-window", params),
+  detectCli: () => ipcRenderer.invoke("detect-cli"),
+  installCli: () => ipcRenderer.invoke("install-cli"),
+  onCliInstallProgress: (callback) => ipcRenderer.on("cli-install-progress", (_event, payload) => callback(payload)),
+  removeCliInstallListeners: () => ipcRenderer.removeAllListeners("cli-install-progress"),
+  addProfile: (params) => ipcRenderer.invoke("add-profile", params),
+  removeProfile: (name) => ipcRenderer.invoke("remove-profile", name),
 });

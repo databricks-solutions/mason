@@ -14,8 +14,11 @@ try {
 const MASON_HOME = path.join(os.homedir(), ".mason");
 const HISTORY_DIR = path.join(MASON_HOME, "chat_history");
 const CONFIG_DIR = path.join(MASON_HOME, "config");
+const BIN_DIR = path.join(MASON_HOME, "bin");
 const WORKSPACES_FILE = path.join(CONFIG_DIR, "workspaces.json");
 const MCP_SERVERS_FILE = path.join(CONFIG_DIR, "mcp_servers.json");
+const CLI_PATH_FILE = path.join(CONFIG_DIR, "cli_path.json");
+const DATABRICKSCFG_PATH = path.join(os.homedir(), ".databrickscfg");
 
 // Resolve full shell PATH for packaged app (macOS GUI apps don't inherit shell PATH)
 function getShellEnv() {
@@ -44,6 +47,51 @@ const shellEnv = getShellEnv();
 if (!fs.existsSync(MASON_HOME)) fs.mkdirSync(MASON_HOME);
 if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR);
 if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR);
+if (!fs.existsSync(BIN_DIR)) fs.mkdirSync(BIN_DIR);
+
+// --- Databricks CLI resolution + install ---
+//
+// Single resolver used everywhere we shell out to `databricks`. Order:
+//   1. Mason-managed binary at ~/.mason/bin/databricks (path saved in
+//      ~/.mason/config/cli_path.json after install).
+//   2. System CLI on the user's resolved shell PATH.
+//   3. null (caller decides whether to prompt for install).
+
+function managedCliPath() {
+  return path.join(BIN_DIR, process.platform === "win32" ? "databricks.exe" : "databricks");
+}
+
+function databricksCliPath() {
+  // Prefer system CLI if it's on PATH — users with brew/winget installs already
+  // get auto-updates from those package managers.
+  const which = process.platform === "win32" ? "where" : "command -v";
+  try {
+    const out = execSync(`${which} databricks`, { encoding: "utf-8", env: shellEnv, timeout: 3000 }).trim().split("\n")[0];
+    if (out && fs.existsSync(out)) return out;
+  } catch (_) { /* not on PATH */ }
+
+  // Fall back to a Mason-managed binary if we previously installed one.
+  const managed = managedCliPath();
+  if (fs.existsSync(managed)) return managed;
+
+  // Last resort: check the saved path file (in case user moved the binary).
+  if (fs.existsSync(CLI_PATH_FILE)) {
+    try {
+      const { path: saved } = JSON.parse(fs.readFileSync(CLI_PATH_FILE, "utf-8"));
+      if (saved && fs.existsSync(saved)) return saved;
+    } catch (_) { /* fall through */ }
+  }
+  return null;
+}
+
+function getCliVersion(cliPath) {
+  try {
+    const out = execSync(`"${cliPath}" --version`, { encoding: "utf-8", timeout: 3000 }).trim();
+    return out;
+  } catch (_) {
+    return null;
+  }
+}
 
 // Fetch with timeout
 let activeChatController = null;
@@ -149,8 +197,13 @@ function getOAuthToken(profile) {
     return cached.token;
   }
 
+  const cli = databricksCliPath();
+  if (!cli) {
+    console.error(`[AUTH] Databricks CLI not installed; cannot fetch token for ${profile}`);
+    return null;
+  }
   try {
-    const result = execSync(`databricks auth token --profile ${profile}`, {
+    const result = execSync(`"${cli}" auth token --profile ${profile}`, {
       encoding: "utf-8",
       timeout: 10000,
       env: shellEnv,
@@ -198,9 +251,13 @@ function getToken(profileName) {
 }
 
 function runOAuthLogin(profile) {
-  console.log(`[AUTH] Running databricks auth login --profile ${profile}...`);
+  const cli = databricksCliPath();
+  if (!cli) {
+    return Promise.resolve({ success: false, error: "Databricks CLI is not installed. Install it from Settings or finish onboarding." });
+  }
+  console.log(`[AUTH] Running ${cli} auth login --profile ${profile}...`);
   return new Promise((resolve) => {
-    const proc = spawn("databricks", ["auth", "login", "--profile", profile], {
+    const proc = spawn(cli, ["auth", "login", "--profile", profile], {
       stdio: ["ignore", "pipe", "pipe"],
       detached: false,
       env: shellEnv,
@@ -237,6 +294,186 @@ ipcMain.handle("get-token", (_event, profile) => {
 
 ipcMain.handle("oauth-login", (_event, profile) => {
   return runOAuthLogin(profile);
+});
+
+// --- Databricks CLI: detect & install ---
+
+ipcMain.handle("detect-cli", () => {
+  const cliPath = databricksCliPath();
+  if (!cliPath) return { installed: false };
+  return { installed: true, path: cliPath, version: getCliVersion(cliPath) };
+});
+
+// Map process.platform/process.arch to the Databricks CLI release asset name fragments.
+function cliPlatformAsset() {
+  let osPart, archPart, ext;
+  if (process.platform === "darwin") {
+    osPart = "darwin";
+    archPart = process.arch === "arm64" ? "arm64" : "amd64";
+    ext = "zip";
+  } else if (process.platform === "linux") {
+    osPart = "linux";
+    archPart = process.arch === "arm64" ? "arm64" : "amd64";
+    ext = "tar.gz";
+  } else if (process.platform === "win32") {
+    osPart = "windows";
+    archPart = "amd64";
+    ext = "zip";
+  } else {
+    throw new Error(`Unsupported platform: ${process.platform}`);
+  }
+  return { osPart, archPart, ext };
+}
+
+async function downloadToFile(url, dest, onProgress) {
+  const res = await fetchWithTimeout(url, {
+    headers: { "User-Agent": "mason-installer", Accept: "application/octet-stream" },
+    redirect: "follow",
+  }, 120000);
+  if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
+  const total = Number(res.headers.get("content-length")) || 0;
+  let received = 0;
+  const reader = res.body.getReader();
+  const out = fs.createWriteStream(dest);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      out.write(Buffer.from(value));
+      received += value.length;
+      if (onProgress && total) onProgress(Math.round((received / total) * 100));
+    }
+  } finally {
+    out.end();
+    await new Promise((r) => out.on("close", r));
+  }
+}
+
+ipcMain.handle("install-cli", async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const send = (phase, percent) => {
+    if (win) win.webContents.send("cli-install-progress", { phase, percent });
+  };
+  try {
+    send("query-release", 0);
+    // Use the GitHub releases redirect: /releases/latest/download/<asset>.
+    // First, find the version + asset name via the releases API.
+    const releaseRes = await fetchWithTimeout("https://api.github.com/repos/databricks/cli/releases/latest", {
+      headers: { "User-Agent": "mason-installer", Accept: "application/vnd.github+json" },
+    }, 30000);
+    if (!releaseRes.ok) throw new Error(`Release lookup failed: HTTP ${releaseRes.status}`);
+    const release = await releaseRes.json();
+    const tag = release.tag_name; // "vX.Y.Z"
+    const version = tag.replace(/^v/, "");
+    const { osPart, archPart, ext } = cliPlatformAsset();
+    const assetName = `databricks_cli_${version}_${osPart}_${archPart}.${ext}`;
+    const asset = (release.assets || []).find((a) => a.name === assetName);
+    if (!asset) throw new Error(`No matching asset for this platform (looked for ${assetName})`);
+    console.log(`[CLI] Found ${assetName} → ${asset.browser_download_url}`);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mason-cli-"));
+    const archive = path.join(tmpDir, assetName);
+
+    send("download", 0);
+    await downloadToFile(asset.browser_download_url, archive, (p) => send("download", p));
+
+    send("extract", 0);
+    if (ext === "zip") {
+      // macOS / Linux ship `unzip`; Windows ships PowerShell Expand-Archive.
+      if (process.platform === "win32") {
+        execSync(`powershell -Command "Expand-Archive -Path '${archive}' -DestinationPath '${tmpDir}' -Force"`, { stdio: "ignore" });
+      } else {
+        execSync(`unzip -oq "${archive}" -d "${tmpDir}"`, { stdio: "ignore" });
+      }
+    } else {
+      execSync(`tar -xzf "${archive}" -C "${tmpDir}"`, { stdio: "ignore" });
+    }
+
+    // The archive contains a `databricks` (or `databricks.exe`) binary at the
+    // top level. Locate it and move into place.
+    const binName = process.platform === "win32" ? "databricks.exe" : "databricks";
+    const extracted = fs.readdirSync(tmpDir).map((n) => path.join(tmpDir, n));
+    let srcBin = extracted.find((p) => path.basename(p) === binName);
+    if (!srcBin) {
+      // Some archives nest the binary in a subdirectory.
+      for (const entry of extracted) {
+        if (fs.statSync(entry).isDirectory()) {
+          const candidate = path.join(entry, binName);
+          if (fs.existsSync(candidate)) { srcBin = candidate; break; }
+        }
+      }
+    }
+    if (!srcBin) throw new Error(`Could not find ${binName} in extracted archive`);
+
+    const destBin = managedCliPath();
+    if (fs.existsSync(destBin)) fs.unlinkSync(destBin);
+    fs.copyFileSync(srcBin, destBin);
+    if (process.platform !== "win32") fs.chmodSync(destBin, 0o755);
+
+    fs.writeFileSync(CLI_PATH_FILE, JSON.stringify({ path: destBin, version }, null, 2));
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    send("done", 100);
+    console.log(`[CLI] Installed ${tag} -> ${destBin}`);
+    return { installed: true, path: destBin, version: getCliVersion(destBin) || version };
+  } catch (err) {
+    console.error("[CLI] Install failed:", err.message);
+    send("error", 0);
+    throw new Error(`Databricks CLI install failed: ${err.message}`);
+  }
+});
+
+// --- Profile management (~/.databrickscfg) ---
+
+// Validate at IPC boundary: untrusted text from the renderer.
+function isValidWorkspaceUrl(host) {
+  if (!host) return false;
+  try {
+    const u = new URL(host);
+    if (u.protocol !== "https:") return false;
+    return /\.(databricks\.com|azuredatabricks\.net|databricksapps\.com)$/i.test(u.hostname);
+  } catch (_) { return false; }
+}
+
+ipcMain.handle("add-profile", (_event, { name, host }) => {
+  if (!name || !/^[A-Za-z0-9_.-]+$/.test(name)) throw new Error("Profile name must be alphanumeric (with . _ -)");
+  const cleanHost = String(host || "").trim().replace(/\/+$/, "");
+  if (!isValidWorkspaceUrl(cleanHost)) throw new Error("Invalid workspace URL.");
+
+  // Read, replace section if exists, otherwise append. Preserve other sections verbatim.
+  let text = "";
+  if (fs.existsSync(DATABRICKSCFG_PATH)) {
+    text = fs.readFileSync(DATABRICKSCFG_PATH, "utf-8");
+  }
+  const sectionRe = new RegExp(`(^|\\n)\\[${name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\][\\s\\S]*?(?=\\n\\[|$)`);
+  const block = `[${name}]\nhost = ${cleanHost}\nauth_type = databricks-cli\n`;
+  if (sectionRe.test(text)) {
+    text = text.replace(sectionRe, (match, leading) => `${leading || ""}${block}`);
+  } else {
+    if (text && !text.endsWith("\n")) text += "\n";
+    if (text) text += "\n";
+    text += block;
+  }
+  fs.writeFileSync(DATABRICKSCFG_PATH, text, { mode: 0o600 });
+  // Ensure permissions on a pre-existing file.
+  try { fs.chmodSync(DATABRICKSCFG_PATH, 0o600); } catch (_) {}
+  console.log(`[PROFILE] Wrote profile [${name}] -> ${cleanHost}`);
+  return { name, host: cleanHost };
+});
+
+ipcMain.handle("remove-profile", (_event, name) => {
+  if (!fs.existsSync(DATABRICKSCFG_PATH)) return false;
+  let text = fs.readFileSync(DATABRICKSCFG_PATH, "utf-8");
+  const sectionRe = new RegExp(`(^|\\n)\\[${name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\][\\s\\S]*?(?=\\n\\[|$)`);
+  if (!sectionRe.test(text)) return false;
+  text = text.replace(sectionRe, "");
+  // Collapse any 3+ consecutive newlines that the removal may have left.
+  text = text.replace(/\n{3,}/g, "\n\n").replace(/^\n+/, "");
+  fs.writeFileSync(DATABRICKSCFG_PATH, text, { mode: 0o600 });
+  // Drop any cached token for that profile.
+  clearTokenCache(name);
+  console.log(`[PROFILE] Removed profile [${name}]`);
+  return true;
 });
 
 // --- Workspace config persistence ---
