@@ -6,7 +6,8 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "postinstall": "node scripts/patch-icon.js",
+    "icon": "node scripts/build-icon.js",
+    "postinstall": "node scripts/build-icon.js && node scripts/patch-icon.js",
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",
     "build:win": "electron-builder --win",
@@ -16,7 +17,8 @@
   "devDependencies": {
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
-    "electron-reloader": "^1.2.3"
+    "electron-reloader": "^1.2.3",
+    "sharp": "^0.34.5"
   },
   "dependencies": {
     "electron-window-state": "^5.0.3",
