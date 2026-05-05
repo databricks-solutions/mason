@@ -9,7 +9,7 @@ async function discoverModels() {
   }
   // Show loading state — but keep default model label if one is set
   if (!mason.defaultModel) {
-    mason.el.modelBtnLabel.textContent = "Loading...";
+    mason.el.modelBtnLabel.textContent = "Select a Model";
   }
   let models;
   try {

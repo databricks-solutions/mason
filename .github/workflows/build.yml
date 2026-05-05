@@ -6,6 +6,9 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-mac:
     runs-on: macos-latest
@@ -14,14 +17,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
       - run: npm ci
-      - run: npm run build:mac
+      - name: Build, sign & notarize macOS
+        run: npm run build:mac
         env:
+          # Apple Developer ID code signing certificate (base64-encoded .p12) + password.
+          # electron-builder reads CSC_LINK / CSC_KEY_PASSWORD automatically.
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          # Apple notary service credentials (used by electron-builder when notarize: true).
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/upload-artifact@v4
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
-          name: mason-mac
-          path: dist/*.dmg
+          files: |
+            dist/*.dmg
+            dist/*.zip
 
   build-win:
     runs-on: windows-latest
@@ -30,14 +45,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
       - run: npm ci
       - run: npm run build:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/upload-artifact@v4
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
-          name: mason-win
-          path: dist/*.exe
+          files: dist/*.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -46,26 +62,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
       - run: npm ci
       - run: npm run build:linux
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: mason-linux
-          path: dist/*.AppImage
-
-  release:
-    needs: [build-mac, build-win, build-linux]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
       - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: |
-            mason-mac/*.dmg
-            mason-win/*.exe
-            mason-linux/*.AppImage
+          files: dist/*.AppImage
