@@ -231,6 +231,55 @@ Two levels of MCP config:
 | `[WORKSPACE]` | DevTools | Profile switching |
 | `[MCP UI]` | DevTools | MCP connect/disconnect |
 
+## CI/CD
+
+Three workflows in `.github/workflows/`:
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `pr.yml` | PR to `main` | Matrix build dry-run on macOS/Windows/Linux. Catches packaging regressions before merge. |
+| `release-please.yml` | Push to `main` | `release-please` opens/updates a "Release PR" aggregating Conventional Commits. Merging it bumps `package.json`, writes `CHANGELOG.md`, tags `vX.Y.Z`, and creates a draft GitHub Release. |
+| `build.yml` | `v*` tag push + manual | Builds signed/notarized macOS DMG, Windows NSIS, Linux AppImage. Uploads installers to the release tag. |
+
+### Versioning — Conventional Commits
+
+`release-please` reads commit messages and bumps version automatically:
+
+| Commit prefix | Bump | Example |
+|---------------|------|---------|
+| `fix:` | patch (1.0.0 → 1.0.1) | `fix: handle 401 on UC reconnect` |
+| `feat:` | minor (1.0.0 → 1.1.0) | `feat: add custom endpoints panel` |
+| `feat!:` or `BREAKING CHANGE:` footer | major (1.0.0 → 2.0.0) | `feat!: remove deprecated PAT auth` |
+| `chore:` / `docs:` / `refactor:` | none | `chore: bump electron` |
+
+Other prefixes (`build`, `ci`, `perf`, `test`, `style`) appear in the changelog but don't bump.
+
+### Release flow
+
+1. Open PR with conventional-commit titles. `pr.yml` runs 3-OS dry-run; all must pass.
+2. Merge PR. `release-please.yml` fires and opens (or updates) a release PR titled `chore(main): release X.Y.Z`.
+3. When ready to ship, merge the release PR. release-please tags `vX.Y.Z` and creates a draft GitHub Release.
+4. Tag push triggers `build.yml`. macOS job signs + notarizes via Apple's notary service. All three jobs upload installers to the release.
+5. Edit the draft release on GitHub if needed, then publish. Users download from `/releases/latest`.
+
+### Required GitHub repo secrets
+
+Settings → Secrets and variables → Actions:
+
+| Secret | Purpose |
+|--------|---------|
+| `MAC_CERT_P12_BASE64` | Base64-encoded Developer ID Application `.p12` cert + private key |
+| `MAC_CERT_PASSWORD` | Password used when exporting the `.p12` |
+| `APPLE_ID` | Apple Developer account email |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password from `account.apple.com` for the notary service |
+| `APPLE_TEAM_ID` | 10-char Apple Team ID (matches the suffix in `package.json` mac.identity, e.g. `6669F65NH6`) |
+
+Until these are set, `build:mac` will fail at the notarize step. Windows/Linux builds work without secrets (unsigned).
+
+### Cutting a release in practice
+
+There's no manual `npm version` step. Just merge the release PR that release-please opens. The rest is automated.
+
 ## npm Note
 
 Databricks npm proxy (`npm-proxy.dev.databricks.com`) required. See go/npm-registry-access.
@@ -307,10 +356,10 @@ Databricks npm proxy (`npm-proxy.dev.databricks.com`) required. See go/npm-regis
 
 - [x] **Electron-builder config**: `package.json` build config for macOS DMG/zip, Windows NSIS, Linux AppImage. App ID `com.databricks.mason`, hardened runtime, entitlements plist.
 - [ ] **Auto-update**: Integrate `electron-updater` so customers receive patches automatically (GitHub Releases or S3-backed). (Deferred — requires publish infrastructure)
-- [ ] **Code signing + notarization**: Apple Developer certificate signing + notarization. (Deferred — requires Apple Developer account credentials)
+- [x] **Code signing + notarization**: Apple Developer ID signing + Apple notary service via `electron-builder` env vars (`CSC_LINK`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`). Wired into `build.yml`. See **CI/CD** section.
 - [x] **Crash reporting**: Global error handlers in both main process (`uncaughtException`, `unhandledRejection`) and renderer (`window.onerror`, `unhandledrejection`). Errors surfaced in chat UI.
 - [x] **Window state persistence**: `electron-window-state` remembers window size/position across restarts.
-- [x] **CI/CD pipeline**: GitHub Actions workflow (`.github/workflows/build.yml`) — builds macOS DMG, Windows EXE, Linux AppImage on tag push, uploads artifacts, creates GitHub Release.
+- [x] **CI/CD pipeline**: Three workflows — `pr.yml` (PR validation across 3 OS), `release-please.yml` (Conventional Commits → release PRs → tags), `build.yml` (signed/notarized installers on tag). See **CI/CD** section.
 - [x] **MCP process cleanup**: All stdio subprocesses killed on `app.before-quit`.
 
 ### Phase 3: Architecture & Code Quality

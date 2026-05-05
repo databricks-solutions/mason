@@ -41,7 +41,7 @@
       .sidebar-new-chat {
         padding: 10px 14px;
         margin: 0 14px 8px;
-        border: 1px dashed #ccc;
+        border: 1px solid #ccc;
         border-radius: 8px;
         background: none;
         color: inherit;
