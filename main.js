@@ -905,9 +905,12 @@ ipcMain.handle("list-uc-connections", async (_event, { host, token }) => {
 
 // --- Model discovery ---
 
-ipcMain.handle("discover-models", async (_event, { gatewayUrl, token }) => {
-  if (!gatewayUrl || !token) return [];
-  const url = `${gatewayUrl.replace(/\/+$/, "")}/api/2.0/serving-endpoints`;
+ipcMain.handle("discover-models", async (_event, { host, gatewayUrl, token }) => {
+  // Backwards-compat: accept either { host } (preferred — workspace API)
+  // or legacy { gatewayUrl } from older saved configs.
+  const base = host || gatewayUrl;
+  if (!base || !token) return [];
+  const url = `${base.replace(/\/+$/, "")}/api/2.0/serving-endpoints`;
   console.log(`[MODELS] Discovering models from ${url}...`);
 
   try {
@@ -953,7 +956,7 @@ ipcMain.handle("discover-models", async (_event, { gatewayUrl, token }) => {
 
 ipcMain.handle("chat", async (_event, { token, model, messages, tools, gateway, format, stream }) => {
   if (!gateway) {
-    throw new Error("No gateway URL configured. Set the AI Gateway URL in Settings for this workspace profile.");
+    throw new Error("No gateway URL available. Make sure the selected profile has a host in ~/.databrickscfg.");
   }
   let effectiveGateway = gateway;
   effectiveGateway = effectiveGateway.replace(/\/(mlflow|openai)\/v1\/.+$/, "");

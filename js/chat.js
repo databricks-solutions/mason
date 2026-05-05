@@ -106,7 +106,7 @@ async function chatLoop(profile) {
   while (maxIterations-- > 0) {
     const chatToken = await getAuthToken();
     const sel = modelEl.value;
-    let chatGateway = mason.workspaceGatewayUrl || null;
+    let chatGateway = getGatewayUrl();
     let chatModel = sel;
     let chatFormat = null;
 

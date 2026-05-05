@@ -1,8 +1,9 @@
 // Model discovery and picker
 
 async function discoverModels() {
-  if (!mason.workspaceGatewayUrl) {
-    console.log("[MODELS] No gateway URL, skipping discovery");
+  const profile = getSelectedProfile();
+  if (!profile || !profile.host) {
+    console.log("[MODELS] No profile/host, skipping discovery");
     mason.discoveredModels = [];
     renderModelMenu();
     return;
@@ -14,8 +15,8 @@ async function discoverModels() {
   let models;
   try {
     const token = await getAuthToken();
-    console.log("[MODELS] Discovering models...");
-    models = await window.api.discoverModels({ gatewayUrl: mason.workspaceGatewayUrl, token });
+    console.log(`[MODELS] Discovering models from ${profile.host}...`);
+    models = await window.api.discoverModels({ host: profile.host, token });
   } catch (e) {
     console.error("[MODELS] Discovery failed:", e.message);
     mason.el.modelBtnLabel.textContent = mason.selectedModelLabel;
@@ -67,7 +68,7 @@ function renderModelMenu() {
   const menuEl = mason.el.modelMenu;
   menuEl.innerHTML = "";
   if (mason.discoveredModels.length === 0 && mason.customEndpoints.length === 0) {
-    menuEl.innerHTML = '<div style="padding:12px 14px;opacity:0.4;font-size:0.83rem;">No models available. Set the AI Gateway URL in Settings.</div>';
+    menuEl.innerHTML = '<div style="padding:12px 14px;opacity:0.4;font-size:0.83rem;">No models available. Check that the selected profile is reachable.</div>';
     return;
   }
   for (const g of mason.discoveredModels) {

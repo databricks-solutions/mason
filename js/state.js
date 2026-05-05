@@ -23,7 +23,6 @@ window.mason = {
   customEndpoints: [],
 
   // Workspace
-  workspaceGatewayUrl: "",
   autoLoadTools: true,
 
   // UI

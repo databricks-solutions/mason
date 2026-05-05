@@ -35,8 +35,6 @@ function initDomRefs() {
     toolsModal: document.getElementById("toolsModal"),
     toolsModalList: document.getElementById("toolsModalList"),
     toolsModalClose: document.getElementById("toolsModalClose"),
-    gatewayUrlInput: document.getElementById("gatewayUrlInput"),
-    gatewaySave: document.getElementById("gatewaySave"),
     endpointsList: document.getElementById("endpointsList"),
     endpointModel: document.getElementById("endpointModel"),
     endpointName: document.getElementById("endpointName"),
@@ -97,7 +95,8 @@ async function loadProfiles() {
 async function loadWorkspaceConfig() {
   const profile = currentProfileName();
   const config = await window.api.workspaceLoad(profile);
-  mason.workspaceGatewayUrl = config.gatewayUrl || "";
+  // gatewayUrl in saved config is legacy — gateway is now derived from profile.host.
+  // Drop it on next save by not reading it.
   mason.customEndpoints = config.customEndpoints || [];
   mason.autoLoadTools = config.autoLoadTools !== false;
   mason.defaultModel = config.defaultModel || null;
@@ -107,13 +106,6 @@ async function loadWorkspaceConfig() {
     mason.el.modelBtnLabel.textContent = mason.defaultModel.label;
   }
   await discoverModels();
-}
-
-async function saveWorkspaceGateway() {
-  const profile = currentProfileName();
-  const config = await window.api.workspaceLoad(profile);
-  config.gatewayUrl = mason.workspaceGatewayUrl;
-  await window.api.workspaceSave({ profile, config });
 }
 
 async function saveCustomEndpoints() {
@@ -379,20 +371,6 @@ function initEventListeners() {
   el.settingsBtn.addEventListener("click", () => switchToSettingsView());
   el.settingsViewClose.addEventListener("click", () => switchToChatsTab());
 
-  el.gatewaySave.addEventListener("click", async () => {
-    const url = el.gatewayUrlInput.value.trim().replace(/\/mlflow\/v1\/chat\/completions\/?$/i, "").replace(/\/+$/, "");
-    if (url && !isValidDatabricksUrl(url)) {
-      alert("Invalid URL. Must be https://*.databricks.com, *.azuredatabricks.net, or *.databricksapps.com");
-      return;
-    }
-    mason.workspaceGatewayUrl = url;
-    el.gatewayUrlInput.value = url;
-    await saveWorkspaceGateway();
-    el.gatewaySave.textContent = "Saved!";
-    setTimeout(() => { el.gatewaySave.textContent = "Save"; }, 2000);
-    await discoverModels();
-  });
-
   el.autoLoadToggle.addEventListener("change", async () => {
     mason.autoLoadTools = el.autoLoadToggle.checked;
     updateToggleVisual();
@@ -528,11 +506,6 @@ function initEventListeners() {
     renderMcpBadges();
     await loadWorkspaceConfig();
 
-    if (!mason.workspaceGatewayUrl) {
-      switchToSettingsView();
-      addMessageEl("error", `Profile "${profileName}" has no AI Gateway URL configured. Enter one in Settings to start chatting.`);
-    }
-
     mason.autoConnectDone = false;
     await autoConnectMcp();
     if (mason.currentView === "dashboards") loadDashboards();
@@ -582,10 +555,6 @@ async function initApp() {
 
   await loadProfiles();
   await loadWorkspaceConfig();
-
-  if (!mason.workspaceGatewayUrl) {
-    switchToSettingsView();
-  }
 
   refreshHistory();
   await autoConnectMcp();

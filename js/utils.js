@@ -25,6 +25,14 @@ async function getAuthToken() {
   return await window.api.getToken(profile.name);
 }
 
+// AI Gateway is now a path on the workspace host: <host>/ai-gateway/...
+// No per-workspace configuration needed — derive from the selected profile.
+function getGatewayUrl() {
+  const p = getSelectedProfile();
+  if (!p || !p.host) return null;
+  return `${p.host.replace(/\/+$/, "")}/ai-gateway`;
+}
+
 // Validate a Databricks URL
 function isValidDatabricksUrl(url) {
   if (!url) return false;

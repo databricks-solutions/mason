@@ -36,7 +36,6 @@ function switchToDashboardsTab() {
 function switchToSettingsView() {
   mason.currentView = "settings";
   // Sync settings UI with current state
-  mason.el.gatewayUrlInput.value = mason.workspaceGatewayUrl || "";
   mason.el.autoLoadToggle.checked = mason.autoLoadTools;
   if (typeof updateToggleVisual === "function") updateToggleVisual();
   if (typeof populateDefaultModelSelect === "function") populateDefaultModelSelect();
