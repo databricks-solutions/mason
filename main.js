@@ -72,10 +72,6 @@ function sanitizeLog(str) {
     .replace(/dapi[a-f0-9]+/g, "dapi****");
 }
 
-const RESPONSES_API_MODELS = new Set([
-  "databricks-gpt-5-2-codex",
-]);
-
 // --- Config parsing ---
 
 function parseDatabricksCfg() {
@@ -924,10 +920,20 @@ ipcMain.handle("discover-models", async (_event, { host, gatewayUrl, token }) =>
     const data = await res.json();
     const endpoints = data.endpoints || [];
 
-    // Group by provider based on name prefix
+    // Group by provider based on name prefix. Each model carries the API format
+    // it expects ("chat" → mlflow/v1/chat/completions, "responses" → openai/v1/responses)
+    // derived from the foundation model's api_types — newer GPT models only support
+    // the Responses API, while most others support Chat Completions.
     const models = endpoints
       .filter((e) => e.endpoint_type === "FOUNDATION_MODEL_API" && e.task && e.task.includes("chat"))
       .map((e) => {
+        const fm = e.config?.served_entities?.[0]?.foundation_model || {};
+        const apiTypes = fm.api_types || [];
+        let format;
+        if (apiTypes.includes("mlflow/v1/chat/completions")) format = "chat";
+        else if (apiTypes.includes("openai/v1/responses")) format = "responses";
+        else return null; // model exposes only formats Mason can't speak
+
         let provider = "Other";
         const n = e.name;
         if (n.includes("claude")) provider = "Anthropic";
@@ -936,12 +942,13 @@ ipcMain.handle("discover-models", async (_event, { host, gatewayUrl, token }) =>
         else if (n.includes("gpt") || n.includes("codex")) provider = "OpenAI";
         else if (n.includes("qwen")) provider = "Qwen";
 
-        // Derive a display label from the model ID
-        const label = n.replace(/^databricks-/, "")
-          .split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+        // Prefer the API-provided display name; fall back to a heuristic.
+        const label = fm.display_name
+          || n.replace(/^databricks-/, "").split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 
-        return { value: n, label, provider };
+        return { value: n, label, provider, format };
       })
+      .filter(Boolean)
       .sort((a, b) => a.provider.localeCompare(b.provider) || a.label.localeCompare(b.label));
 
     console.log(`[MODELS] Found ${models.length} chat models`);
@@ -960,7 +967,7 @@ ipcMain.handle("chat", async (_event, { token, model, messages, tools, gateway, 
   }
   let effectiveGateway = gateway;
   effectiveGateway = effectiveGateway.replace(/\/(mlflow|openai)\/v1\/.+$/, "");
-  const isResponses = format === "responses" || (!format && RESPONSES_API_MODELS.has(model));
+  const isResponses = format === "responses";
   const shouldStream = stream && !isResponses && !(tools && tools.length > 0);
   console.log(`[CHAT] model=${model}, gateway=${effectiveGateway}, format=${isResponses ? "responses" : "chat"}, stream=${shouldStream}, messages=${messages.length}, tools=${tools ? tools.length : 0}`);
   const headers = {

@@ -117,6 +117,13 @@ async function chatLoop(profile) {
         if (ep.gatewayUrl) chatGateway = ep.gatewayUrl;
         chatFormat = ep.format;
       }
+    } else {
+      // Look up the discovered model's API format ("chat" vs "responses").
+      // Newer GPT models (5.5 Pro, 5.3 Codex, etc.) only speak the Responses API.
+      for (const g of mason.discoveredModels) {
+        const m = g.models.find((x) => x.value === sel);
+        if (m && m.format) { chatFormat = m.format; break; }
+      }
     }
 
     // Streaming when no tools

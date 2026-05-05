@@ -26,7 +26,7 @@ async function discoverModels() {
   const groups = {};
   for (const m of models) {
     if (!groups[m.provider]) groups[m.provider] = [];
-    groups[m.provider].push({ value: m.value, label: m.label });
+    groups[m.provider].push({ value: m.value, label: m.label, format: m.format });
   }
   const order = ["Anthropic", "Google", "Meta", "OpenAI"];
   mason.discoveredModels = [];
