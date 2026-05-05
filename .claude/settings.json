@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git ls-tree *)",
+      "Bash(rm -rf .git/refs/original)",
+      "Bash(git reflog *)",
+      "Bash(git gc *)",
+      "Bash(git fsck *)",
+      "Bash(git cherry-pick *)",
+      "Bash(git restore *)",
+      "Bash(git update-ref *)",
+      "Bash(git push *)",
+      "Bash(git fetch *)"
+    ]
+  }
+}
