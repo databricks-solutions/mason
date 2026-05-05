@@ -929,10 +929,14 @@ ipcMain.handle("discover-models", async (_event, { host, gatewayUrl, token }) =>
       .map((e) => {
         const fm = e.config?.served_entities?.[0]?.foundation_model || {};
         const apiTypes = fm.api_types || [];
+        const supportsChat = apiTypes.includes("mlflow/v1/chat/completions");
+        const supportsResponses = apiTypes.includes("openai/v1/responses");
+        // Default format: prefer chat (better streaming UX). Switch to responses
+        // at chat-time when tools are present and the model supports it.
         let format;
-        if (apiTypes.includes("mlflow/v1/chat/completions")) format = "chat";
-        else if (apiTypes.includes("openai/v1/responses")) format = "responses";
-        else return null; // model exposes only formats Mason can't speak
+        if (supportsChat) format = "chat";
+        else if (supportsResponses) format = "responses";
+        else return null; // exposes only formats Mason can't speak
 
         let provider = "Other";
         const n = e.name;
@@ -946,7 +950,7 @@ ipcMain.handle("discover-models", async (_event, { host, gatewayUrl, token }) =>
         const label = fm.display_name
           || n.replace(/^databricks-/, "").split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 
-        return { value: n, label, provider, format };
+        return { value: n, label, provider, format, apiTypes };
       })
       .filter(Boolean)
       .sort((a, b) => a.provider.localeCompare(b.provider) || a.label.localeCompare(b.label));
@@ -979,24 +983,63 @@ ipcMain.handle("chat", async (_event, { token, model, messages, tools, gateway, 
 
   if (isResponses) {
     url = `${effectiveGateway}/openai/v1/responses`;
-    if (tools && tools.length > 0) {
-      console.log(`[CHAT] Warning: ${model} uses Responses API which does not support tool calling`);
+    // Translate chat-completions-style history into the Responses `input` format.
+    // Plain user/assistant/system messages become {role, content:[{type, text}]}.
+    // Assistant messages with tool_calls expand into one or more `function_call`
+    // items. Role "tool" results map to `function_call_output` items keyed by
+    // the original tool_call_id.
+    const input = [];
+    for (const m of messages) {
+      if (!m) continue;
+      if (m.role === "tool") {
+        input.push({
+          type: "function_call_output",
+          call_id: m.tool_call_id,
+          output: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+        });
+        continue;
+      }
+      if (m.role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+        if (m.content) {
+          input.push({ role: "assistant", content: [{ type: "output_text", text: m.content }] });
+        }
+        for (const tc of m.tool_calls) {
+          input.push({
+            type: "function_call",
+            call_id: tc.id,
+            name: tc.function?.name,
+            arguments: tc.function?.arguments || "{}",
+          });
+        }
+        continue;
+      }
+      if ((m.role === "user" || m.role === "assistant" || m.role === "system") && m.content) {
+        const textContent = typeof m.content === "string"
+          ? m.content
+          : (Array.isArray(m.content) ? m.content.map((p) => p.text || "").join("") : String(m.content));
+        input.push({
+          role: m.role,
+          content: [{
+            type: m.role === "assistant" ? "output_text" : "input_text",
+            text: textContent,
+          }],
+        });
+      }
     }
-    const filteredMessages = messages.filter((m) =>
-      m.role === "user" || m.role === "assistant" || m.role === "system"
-    ).filter((m) => m.content);
 
-    body = {
-      model,
-      max_output_tokens: 1024,
-      input: filteredMessages.map((m) => ({
-        role: m.role,
-        content: [{
-          type: m.role === "assistant" ? "output_text" : "input_text",
-          text: m.content,
-        }],
-      })),
-    };
+    body = { model, max_output_tokens: 4096, input };
+
+    // Responses API tool schema is flat (no `function:` wrapper).
+    if (tools && tools.length > 0) {
+      body.tools = tools.map((t) => ({
+        type: "function",
+        name: t.function.name,
+        description: t.function.description,
+        parameters: t.function.parameters,
+      }));
+      body.tool_choice = "auto";
+      console.log(`[CHAT] Sending ${tools.length} tools (responses format): ${tools.map((t) => t.function.name).join(", ")}`);
+    }
   } else {
     url = `${effectiveGateway}/mlflow/v1/chat/completions`;
     if (tools && tools.length > 0) {
@@ -1069,12 +1112,29 @@ ipcMain.handle("chat", async (_event, { token, model, messages, tools, gateway, 
   const data = await res.json();
 
   if (isResponses) {
-    const msg = (data.output || []).find((o) => o.type === "message");
+    const items = data.output || [];
+    // Responses returns function_call items alongside the message item.
+    // Translate them into chat-completions-style tool_calls so chat.js's loop
+    // can stay agnostic.
+    const toolCalls = items
+      .filter((o) => o.type === "function_call")
+      .map((o) => ({
+        id: o.call_id,
+        type: "function",
+        function: { name: o.name, arguments: o.arguments || "{}" },
+      }));
+
+    const msg = items.find((o) => o.type === "message");
+    let textContent = "";
     if (msg) {
-      const textPart = msg.content.find((c) => c.type === "output_text");
-      if (textPart) return { type: "text", content: textPart.text };
+      const textPart = (msg.content || []).find((c) => c.type === "output_text");
+      if (textPart) textContent = textPart.text;
     }
-    return { type: "text", content: JSON.stringify(data) };
+
+    if (toolCalls.length > 0) {
+      return { type: "tool_calls", content: textContent || null, tool_calls: toolCalls };
+    }
+    return { type: "text", content: textContent || JSON.stringify(data) };
   }
 
   const choice = data.choices[0];

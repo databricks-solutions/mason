@@ -86,6 +86,3 @@ function maybeDisableTools(tools) {
   }
 }
 
-function isResponsesApiModel(modelId) {
-  return modelId.includes("codex");
-}

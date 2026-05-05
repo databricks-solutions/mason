@@ -87,18 +87,13 @@ async function send() {
 async function chatLoop(profile) {
   const toolDefs = getAllToolDefs();
   const selectedModel = modelEl.value;
-  const customEp = selectedModel.startsWith("custom:")
-    ? mason.customEndpoints.find((e) => e.modelId === selectedModel.replace("custom:", ""))
-    : null;
-  const isResponsesApi = isResponsesApiModel(selectedModel) || (customEp && customEp.format === "responses");
-  const toolsForApi = (toolDefs.length > 0 && !isResponsesApi)
+  // Tools are passed in chat-completions schema; main.js translates to the
+  // Responses API schema when the chosen model needs that route.
+  const toolsForApi = toolDefs.length > 0
     ? toolDefs.map(({ type, function: fn }) => ({ type, function: fn }))
     : null;
 
-  console.log(`[CHAT] MCP servers: ${mason.mcpServers.length}, tools: ${toolDefs.length}, responsesApi: ${isResponsesApi}`);
-  if (isResponsesApi && toolDefs.length > 0) {
-    addMessageEl("error", "Tools are not supported with this model. Switch to Claude, Gemini, or Llama for tool calling.");
-  }
+  console.log(`[CHAT] MCP servers: ${mason.mcpServers.length}, tools: ${toolDefs.length}`);
   if (toolsForApi) console.log(`[CHAT] Sending tools:`, JSON.stringify(toolsForApi.map((t) => t.function.name)));
 
   let maxIterations = 10;
@@ -120,9 +115,19 @@ async function chatLoop(profile) {
     } else {
       // Look up the discovered model's API format ("chat" vs "responses").
       // Newer GPT models (5.5 Pro, 5.3 Codex, etc.) only speak the Responses API.
+      // Some chat-capable models (e.g. gpt-5-5) reject tool calls in chat
+      // completions due to server-side reasoning_effort — promote to Responses
+      // when tools are present and the model supports it.
       for (const g of mason.discoveredModels) {
         const m = g.models.find((x) => x.value === sel);
-        if (m && m.format) { chatFormat = m.format; break; }
+        if (m) {
+          chatFormat = m.format || null;
+          const supportsResponses = m.apiTypes && m.apiTypes.includes("openai/v1/responses");
+          if (toolsForApi && toolsForApi.length > 0 && supportsResponses) {
+            chatFormat = "responses";
+          }
+          break;
+        }
       }
     }
 
