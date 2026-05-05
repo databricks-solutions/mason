@@ -7,7 +7,7 @@ const os = require("os");
 try {
   require("electron-reloader")(module, {
     watchRenderer: true,
-    ignore: ["chat_history", "config"],
+    ignore: ["chat_history"],
   });
 } catch (_) {}
 
@@ -39,19 +39,11 @@ function getShellEnv() {
 }
 const shellEnv = getShellEnv();
 
-// Ensure ~/.mason directories exist on startup
+// Ensure ~/.mason directories exist on startup. Config files are created
+// lazily on first save by saveWorkspaces / saveMcpServers / etc.
 if (!fs.existsSync(MASON_HOME)) fs.mkdirSync(MASON_HOME);
 if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR);
 if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR);
-
-// Seed config files from bundled defaults if they don't exist yet
-const BUNDLED_CONFIG_DIR = path.join(__dirname, "config");
-if (!fs.existsSync(WORKSPACES_FILE) && fs.existsSync(path.join(BUNDLED_CONFIG_DIR, "workspaces.json"))) {
-  fs.copyFileSync(path.join(BUNDLED_CONFIG_DIR, "workspaces.json"), WORKSPACES_FILE);
-}
-if (!fs.existsSync(MCP_SERVERS_FILE) && fs.existsSync(path.join(BUNDLED_CONFIG_DIR, "mcp_servers.json"))) {
-  fs.copyFileSync(path.join(BUNDLED_CONFIG_DIR, "mcp_servers.json"), MCP_SERVERS_FILE);
-}
 
 // Fetch with timeout
 let activeChatController = null;

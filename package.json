@@ -38,7 +38,6 @@
       "js/**/*",
       "css/**/*",
       "icons/**/*",
-      "config/**/*",
       "build/icon.icns",
       "build/icon_square.png"
     ],
