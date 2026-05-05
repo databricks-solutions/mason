@@ -120,8 +120,3 @@ touch "$DEST_APP"
 
 ok "Installed $APP_NAME.app to $INSTALL_DIR"
 ok "Launch with: open -a $APP_NAME"
-echo
-echo "If the Finder/Launchpad icon looks generic, you can refresh the icon cache:"
-echo "  sudo rm -rf /Library/Caches/com.apple.iconservices.store"
-echo "  rm -rf ~/Library/Caches/com.apple.iconservices.store"
-echo "  killall Dock Finder"
