@@ -64,13 +64,30 @@ curl -fL --progress-bar -o "$DMG_PATH" "$DMG_URL" || err "Download failed."
 
 # --- Mount, copy, unmount ---
 log "Mounting DMG..."
-MOUNT_OUTPUT="$(hdiutil attach -nobrowse -readonly "$DMG_PATH")"
-MOUNT_POINT="$(printf '%s' "$MOUNT_OUTPUT" | awk -F'\t' '/\/Volumes\// { sub(/^ +/, "", $NF); print $NF; exit }')"
-[[ -d "$MOUNT_POINT" ]] || err "Could not determine mount point from hdiutil output."
+# Use plist output for robust parsing regardless of whitespace in volume name.
+PLIST_OUT="$(hdiutil attach -nobrowse -readonly -plist "$DMG_PATH")"
+# Capture the device entry (e.g. /dev/disk4) and the mount point (/Volumes/...).
+DEV_NODE="$(printf '%s' "$PLIST_OUT" | /usr/libexec/PlistBuddy -c 'Print :system-entities:0:dev-entry' /dev/stdin 2>/dev/null || true)"
+# The mount point lives on a later index; iterate to find the one with mount-point set.
+MOUNT_POINT=""
+for i in 0 1 2 3 4 5; do
+  MP="$(printf '%s' "$PLIST_OUT" | /usr/libexec/PlistBuddy -c "Print :system-entities:$i:mount-point" /dev/stdin 2>/dev/null || true)"
+  if [[ -n "$MP" && -d "$MP" ]]; then MOUNT_POINT="$MP"; break; fi
+done
+
+[[ -n "$MOUNT_POINT" && -d "$MOUNT_POINT" ]] || err "Could not determine mount point from hdiutil output."
 
 cleanup_mount() {
-  if [[ -n "${MOUNT_POINT:-}" && -d "$MOUNT_POINT" ]]; then
-    hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
+  # Detach by device node first (most reliable). Fall back to mount path. Force
+  # if anything's still holding the volume open.
+  if [[ -n "${DEV_NODE:-}" ]]; then
+    hdiutil detach "$DEV_NODE" -quiet 2>/dev/null \
+      || hdiutil detach "$DEV_NODE" -force -quiet 2>/dev/null \
+      || true
+  elif [[ -n "${MOUNT_POINT:-}" && -d "$MOUNT_POINT" ]]; then
+    hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null \
+      || hdiutil detach "$MOUNT_POINT" -force -quiet 2>/dev/null \
+      || true
   fi
   rm -rf "$TMP_DIR"
 }
