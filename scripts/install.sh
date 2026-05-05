@@ -118,12 +118,10 @@ xattr -dr com.apple.quarantine "$DEST_APP" 2>/dev/null || true
 # a bundle id with a prior install can render with a generic placeholder.
 touch "$DEST_APP"
 
-# Restart Dock so the cached icon for our bundle id gets refreshed. Cheap and
-# non-disruptive (Dock relaunches in <1s).
-killall Dock 2>/dev/null || true
-
 ok "Installed $APP_NAME.app to $INSTALL_DIR"
 ok "Launch with: open -a $APP_NAME"
 echo
-echo "If the Finder icon still looks generic, run:"
-echo "  sudo rm -rf /Library/Caches/com.apple.iconservices.store && killall Dock Finder"
+echo "If the Finder/Launchpad icon looks generic, you can refresh the icon cache:"
+echo "  sudo rm -rf /Library/Caches/com.apple.iconservices.store"
+echo "  rm -rf ~/Library/Caches/com.apple.iconservices.store"
+echo "  killall Dock Finder"
