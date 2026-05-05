@@ -1079,10 +1079,17 @@ ipcMain.handle("chat", async (_event, { token, model, messages, tools, gateway, 
 
   if (!res.ok) {
     const text = await res.text();
-    // Friendlier error for the common "endpoint listed but not enabled" case —
-    // the picker showed the model but the workspace can't actually invoke it.
+    // The AI Gateway returns 404 + "is not enabled" in two distinct cases:
+    //   1. AI Gateway is disabled at the workspace level → every model fails.
+    //   2. AI Gateway is on but this specific model isn't enabled.
+    // We can't tell which from one response, so cover both in the message.
     if (res.status === 404 && /is not enabled/i.test(text)) {
-      throw new Error(`The selected model "${model}" isn't enabled in this workspace. Pick a different model from the dropdown, or have a workspace admin enable it.`);
+      throw new Error(
+        `Can't reach the AI Gateway endpoint for "${model}". This usually means either:\n` +
+        `  • AI Gateway isn't enabled on this workspace — a workspace admin can turn it on under Compute → Serving → AI Gateway.\n` +
+        `  • The model itself isn't enabled — try a different model from the dropdown.\n` +
+        `If you have access to another workspace where Mason is known to work, switch profiles in the sidebar.`
+      );
     }
     throw new Error(`API ${res.status}: ${text}`);
   }
