@@ -35,7 +35,6 @@
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
             </svg>
           </button>
-          <button class="settings-toggle" id="themeToggle" title="Toggle theme" aria-label="Toggle theme"><img src="icons/moon.webp" alt="" style="width:22px;height:22px;vertical-align:middle;"></button>
         </div>
       </div>
     </div>
@@ -200,15 +199,26 @@
             <div style="font-size:0.72rem;opacity:0.35;">Auto-selected on app start and profile switch</div>
           </div>
           <div style="margin-bottom:18px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;">
+            <div class="settings-toggle-row">
               <div>
                 <div style="font-size:0.85rem;font-weight:500;">Auto-load MCP tools</div>
                 <div style="font-size:0.75rem;opacity:0.45;">When on, all MCP tools are enabled by default on connect</div>
               </div>
-              <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;">
-                <input type="checkbox" id="autoLoadToolsToggle" style="opacity:0;width:0;height:0;">
-                <span id="autoLoadToolsTrack" style="position:absolute;inset:0;background:#ccc;border-radius:12px;transition:background 0.2s;"></span>
-                <span id="autoLoadToolsThumb" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></span>
+              <label class="settings-switch">
+                <input type="checkbox" id="autoLoadToolsToggle">
+                <span id="autoLoadToolsTrack" class="settings-switch-track"></span>
+                <span id="autoLoadToolsThumb" class="settings-switch-thumb"></span>
+              </label>
+            </div>
+            <div class="settings-toggle-row">
+              <div>
+                <div style="font-size:0.85rem;font-weight:500;">Dark mode</div>
+                <div style="font-size:0.75rem;opacity:0.45;">Switches the app and code-block themes</div>
+              </div>
+              <label class="settings-switch">
+                <input type="checkbox" id="darkModeToggle">
+                <span id="darkModeTrack" class="settings-switch-track"></span>
+                <span id="darkModeThumb" class="settings-switch-thumb"></span>
               </label>
             </div>
           </div>

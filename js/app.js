@@ -12,7 +12,9 @@ function initDomRefs() {
     newChat: document.getElementById("newChat"),
     sidebar: document.getElementById("sidebar"),
     sidebarToggle: document.getElementById("sidebarToggle"),
-    themeToggle: document.getElementById("themeToggle"),
+    darkModeToggle: document.getElementById("darkModeToggle"),
+    darkModeTrack: document.getElementById("darkModeTrack"),
+    darkModeThumb: document.getElementById("darkModeThumb"),
     historyList: document.getElementById("historyList"),
     plusBtn: document.getElementById("plusBtn"),
     popupMenu: document.getElementById("popupMenu"),
@@ -330,12 +332,24 @@ function initEventListeners() {
   // Sidebar toggle
   el.sidebarToggle.addEventListener("click", () => el.sidebar.classList.toggle("hidden"));
 
-  // Theme toggle
-  el.themeToggle.addEventListener("click", () => {
-    document.body.classList.toggle("dark");
-    const isDark = document.body.classList.contains("dark");
+  // Dark mode toggle (in Settings → preferences row, mirrors Auto-load styling).
+  // Persisted to localStorage so the choice survives restarts.
+  function applyDarkMode(isDark) {
+    document.body.classList.toggle("dark", isDark);
     document.getElementById("hljs-light").disabled = isDark;
     document.getElementById("hljs-dark").disabled = !isDark;
+    el.darkModeTrack.style.background = isDark ? "#4caf50" : "#ccc";
+    el.darkModeThumb.style.transform = isDark ? "translateX(20px)" : "translateX(0)";
+  }
+  // Initial state: localStorage > existing body.dark class > light.
+  const stored = localStorage.getItem("mason-dark-mode");
+  const initialDark = stored === "1" || (stored === null && document.body.classList.contains("dark"));
+  el.darkModeToggle.checked = initialDark;
+  applyDarkMode(initialDark);
+  el.darkModeToggle.addEventListener("change", () => {
+    const isDark = el.darkModeToggle.checked;
+    applyDarkMode(isDark);
+    localStorage.setItem("mason-dark-mode", isDark ? "1" : "0");
   });
 
   // Dashboard nav tabs
