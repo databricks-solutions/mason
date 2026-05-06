@@ -954,15 +954,16 @@
       }
       #devkitProgress .onboarding-progress-fill { width: 100%; }
 
-      /* Sidebar version label (faint, sits in the settings row next to the cog) */
+      /* Sidebar version label — sits at the right edge of the settings row,
+         pushed there by margin-left:auto so the cog/update icons stay left. */
       .sidebar-version {
-        font-size: 0.7rem;
-        opacity: 0.35;
+        font-size: 0.72rem;
+        opacity: 0.5;
         font-variant-numeric: tabular-nums;
-        margin-right: auto;
+        margin-left: auto;
         user-select: text;
       }
-      body.dark .sidebar-version { opacity: 0.4; }
+      body.dark .sidebar-version { opacity: 0.55; }
 
       /* Update button gets a subtle blue dot when shown */
       .settings-update { position: relative; color: #007aff !important; }
