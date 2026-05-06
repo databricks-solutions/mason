@@ -871,8 +871,11 @@ async function initApp() {
   // versions the user explicitly skipped.
   try {
     const v = await window.api.getAppVersion();
+    console.log(`[VERSION] getAppVersion returned: ${JSON.stringify(v)}`);
     if (v && el.sidebarVersion) el.sidebarVersion.textContent = `v${v}`;
-  } catch (_) {}
+  } catch (e) {
+    console.error("[VERSION] getAppVersion failed:", e.message);
+  }
   if (navigator.onLine) {
     checkForUpdates().catch((e) => console.error("[UPDATE]", e.message));
   }
