@@ -1,6 +1,6 @@
 # Mason
 
-A desktop chat app built with Electron that connects to the Databricks AI Gateway. Talk to multiple LLMs through a unified interface with MCP tool calling, local filesystem access, auto-discovered models, and streaming responses.
+Mason is a desktop application that leverages Databricks Unity AI Gateway and Unity Catalog to give your enterprise a central, governed, and powerful AI exerience. Interact with any foundational model provider or custom model you've built on databricks through a unified interface with MCP tool calling, local filesystem access, auto-discovered models, and access to Databricks Dashboards.
 
 <p align="center">
   <img src="docs/model.gif" alt="Switching between Claude, GPT, Gemini, and Llama models in Mason" width="720">
