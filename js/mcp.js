@@ -11,19 +11,24 @@ async function connectMcpServer(url) {
   mason.mcpServers.push({ type: "http", url, displayName, serverInfo: result.serverInfo, tools: result.tools });
   maybeDisableTools(result.tools);
   renderMcpBadges();
-  await saveMcpConfig();
+  await saveMcpHttp();
 }
 
-async function saveMcpConfig() {
-  // HTTP servers → per-workspace only
+// Two save paths so each persists only the transport it owns. Previously a
+// single saveMcpConfig() rebuilt BOTH lists from runtime state — meaning an
+// HTTP add could clobber a stdio entry that lived on disk but hadn't yet been
+// auto-connected (e.g. ai-dev-kit registered via Settings install).
+
+async function saveMcpHttp() {
   const httpUrls = mason.mcpServers.filter((s) => s.type !== "stdio").map((s) => s.url);
   const profile = currentProfileName();
   const config = await window.api.workspaceLoad(profile);
   config.mcpServers = httpUrls;
   delete config.stdioServers;
   await window.api.workspaceSave({ profile, config });
+}
 
-  // Stdio servers → global only
+async function saveMcpStdio() {
   const stdioConfigs = mason.mcpServers.filter((s) => s.type === "stdio").map((s) => ({
     name: s.configName,
     command: s.config.command,
@@ -31,6 +36,13 @@ async function saveMcpConfig() {
     env: s.config.env || {},
   }));
   await window.api.mcpGlobalConfigSave({ stdio: stdioConfigs });
+}
+
+// Backwards-compatible wrapper: persists both lists. Used by paths that
+// genuinely modified both (legacy stdio migration, multi-server load).
+async function saveMcpConfig() {
+  await saveMcpHttp();
+  await saveMcpStdio();
 }
 
 function renderMcpServerList() {
