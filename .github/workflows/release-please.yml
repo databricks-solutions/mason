@@ -11,7 +11,10 @@ permissions:
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    # Hardened Linux runner group for the databricks-solutions org.
+    runs-on:
+      group: databricks-solutions-protected-runner-group
+      labels: linux-ubuntu-latest
     permissions:
       contents: write
       pull-requests: write

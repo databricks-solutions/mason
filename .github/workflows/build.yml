@@ -7,18 +7,29 @@ on:
   workflow_dispatch:
 
 # Workflow-level default is read-only. Each build job widens to contents:write
-# only because it uploads its installer to the release tag. Splitting upload
-# into a separate job is a deferred follow-up (see CLAUDE.md CI/CD section).
+# only because it uploads its installer to the release tag, and to id-token:
+# write so the JFrog OIDC step in setup-jfrog can mint a short-lived token.
 permissions:
   contents: read
 
 jobs:
   build-mac:
+    # Org has no hardened macOS runner group today (per Gerardo's interim
+    # guidance — tracked in the IT scenario doc). Continue using the
+    # github-hosted runner; npm still flows through JFrog via OIDC.
     runs-on: macos-latest
     permissions:
       contents: write
+      id-token: write  # JFrog OIDC
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pin)
+      - name: Configure JFrog npm registry (OIDC)
+        uses: databricks-field-eng/pickling-cool-cucumbers/.github/actions/setup-jfrog@797d93c8bdc546733f5f03e018e8f790b12280b6 # main (pin)
+        with:
+          configure-npm: 'true'
+          configure-pip: 'false'
+          configure-uv: 'false'
+          configure-terraform: 'false'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4 (pin)
         with:
           node-version: "20"
@@ -46,11 +57,20 @@ jobs:
             dist/*.zip
 
   build-win:
+    # Org has no hardened Windows runner today (Gerardo interim guidance).
     runs-on: windows-latest
     permissions:
       contents: write
+      id-token: write  # JFrog OIDC
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pin)
+      - name: Configure JFrog npm registry (OIDC)
+        uses: databricks-field-eng/pickling-cool-cucumbers/.github/actions/setup-jfrog@797d93c8bdc546733f5f03e018e8f790b12280b6 # main (pin)
+        with:
+          configure-npm: 'true'
+          configure-pip: 'false'
+          configure-uv: 'false'
+          configure-terraform: 'false'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4 (pin)
         with:
           node-version: "20"
@@ -67,11 +87,22 @@ jobs:
           files: dist/*.exe
 
   build-linux:
-    runs-on: ubuntu-latest
+    # Hardened Linux runner group for the databricks-solutions org.
+    runs-on:
+      group: databricks-solutions-protected-runner-group
+      labels: linux-ubuntu-latest
     permissions:
       contents: write
+      id-token: write  # JFrog OIDC
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pin)
+      - name: Configure JFrog npm registry (OIDC)
+        uses: databricks-field-eng/pickling-cool-cucumbers/.github/actions/setup-jfrog@797d93c8bdc546733f5f03e018e8f790b12280b6 # main (pin)
+        with:
+          configure-npm: 'true'
+          configure-pip: 'false'
+          configure-uv: 'false'
+          configure-terraform: 'false'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4 (pin)
         with:
           node-version: "20"

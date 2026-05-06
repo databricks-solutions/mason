@@ -10,18 +10,27 @@ on:
 permissions:
   contents: read
 
+# Three sibling jobs (instead of a single matrix) because the runner-group
+# form for hardened Linux doesn't compose with `runs-on: ${{ matrix.os }}`.
+# This also lets us put per-OS notes inline (no hardened mac/win runners
+# yet org-wide).
+
 jobs:
-  build:
-    name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  pr-build-mac:
+    name: Build (macos-latest)
+    runs-on: macos-latest
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+      id-token: write  # JFrog OIDC
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pin)
+      - name: Configure JFrog npm registry (OIDC)
+        uses: databricks-field-eng/pickling-cool-cucumbers/.github/actions/setup-jfrog@797d93c8bdc546733f5f03e018e8f790b12280b6 # main (pin)
+        with:
+          configure-npm: 'true'
+          configure-pip: 'false'
+          configure-uv: 'false'
+          configure-terraform: 'false'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4 (pin)
         with:
           node-version: "20"
@@ -33,5 +42,63 @@ jobs:
         run: npm run dist
         env:
           # PR builds skip signing/notarization — those run only on tag.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pr-build-win:
+    name: Build (windows-latest)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write  # JFrog OIDC
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pin)
+      - name: Configure JFrog npm registry (OIDC)
+        uses: databricks-field-eng/pickling-cool-cucumbers/.github/actions/setup-jfrog@797d93c8bdc546733f5f03e018e8f790b12280b6 # main (pin)
+        with:
+          configure-npm: 'true'
+          configure-pip: 'false'
+          configure-uv: 'false'
+          configure-terraform: 'false'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4 (pin)
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Verify npm package signatures
+        run: npm audit signatures
+      - name: Build (no publish, no signing)
+        run: npm run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pr-build-linux:
+    name: Build (linux-ubuntu-latest, hardened)
+    runs-on:
+      group: databricks-solutions-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # JFrog OIDC
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pin)
+      - name: Configure JFrog npm registry (OIDC)
+        uses: databricks-field-eng/pickling-cool-cucumbers/.github/actions/setup-jfrog@797d93c8bdc546733f5f03e018e8f790b12280b6 # main (pin)
+        with:
+          configure-npm: 'true'
+          configure-pip: 'false'
+          configure-uv: 'false'
+          configure-terraform: 'false'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4 (pin)
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Verify npm package signatures
+        run: npm audit signatures
+      - name: Build (no publish, no signing)
+        run: npm run dist
+        env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
