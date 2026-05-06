@@ -2,6 +2,10 @@
 
 A desktop chat app built with Electron that connects to the Databricks AI Gateway. Talk to multiple LLMs through a unified interface with MCP tool calling, local filesystem access, auto-discovered models, and streaming responses.
 
+<p align="center">
+  <img src="docs/model_selection.gif" alt="Switching between Claude, GPT, Gemini, and Llama models in Mason" width="720">
+</p>
+
 ## Installation
 
 ### macOS (Apple Silicon) — one-line install
