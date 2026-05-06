@@ -29,6 +29,15 @@
         <label>Profile</label>
         <select id="profile"></select>
         <div class="settings-row">
+          <span class="sidebar-version" id="sidebarVersion" title="Mason version"></span>
+          <button class="settings-toggle settings-update" id="updateBtn" title="A new version is available" aria-label="A new version is available" style="display:none;">
+            <!-- Update — download arrow into tray -->
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </button>
           <button class="settings-toggle" id="settingsBtn" title="Settings" aria-label="Open settings">
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;">
               <circle cx="12" cy="12" r="3"/>
@@ -282,6 +291,25 @@
               <span id="systemPromptCount" style="font-size:0.72rem;opacity:0.45;">0 / 3000</span>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Update Available Modal -->
+    <div class="modal-overlay" id="updateModal" role="dialog" aria-modal="true" aria-labelledby="updateModalTitle">
+      <div class="modal" style="min-width:380px;max-width:480px;">
+        <h3 id="updateModalTitle">Update Available</h3>
+        <p style="font-size:0.92rem;margin-bottom:6px;">
+          Mason <strong id="updateLatest">—</strong> is out (you're on <span id="updateCurrent">—</span>).
+        </p>
+        <p style="font-size:0.78rem;opacity:0.6;margin-bottom:12px;">
+          Open the release page to download the latest installer or run the install one-liner. Your chats, profiles, and settings are preserved.
+        </p>
+        <div id="updateNotes" style="font-size:0.78rem;opacity:0.7;max-height:160px;overflow-y:auto;background:rgba(0,0,0,0.04);padding:8px 10px;border-radius:6px;margin-bottom:12px;white-space:pre-wrap;display:none;"></div>
+        <div class="modal-btns">
+          <button class="modal-btn secondary" id="updateLater">Later</button>
+          <button class="modal-btn secondary" id="updateSkip">Skip this version</button>
+          <button class="modal-btn primary" id="updateOpen">Open release page</button>
         </div>
       </div>
     </div>

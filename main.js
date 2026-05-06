@@ -29,6 +29,8 @@ const DEVKIT_MCP_ENTRY = path.join(DEVKIT_REPO_DIR, "databricks-mcp-server", "ru
 const DEVKIT_VERSION_FILE = path.join(DEVKIT_REPO_DIR, ".ai-dev-kit", "version");
 const DEVKIT_INSTALL_URL = "https://raw.githubusercontent.com/databricks-solutions/ai-dev-kit/main/install.sh";
 const UV_INSTALL_URL = "https://astral.sh/uv/install.sh";
+const MASON_REPO = "databricks-solutions/mason";
+const MASON_RELEASES_URL = `https://github.com/${MASON_REPO}/releases/latest`;
 const MCP_NAME_DEVKIT = "ai-dev-kit";
 
 // Resolve full shell PATH for packaged app (macOS GUI apps don't inherit shell PATH)
@@ -305,6 +307,59 @@ ipcMain.handle("get-token", (_event, profile) => {
 
 ipcMain.handle("oauth-login", (_event, profile) => {
   return runOAuthLogin(profile);
+});
+
+// --- App self-update awareness ---
+//
+// Mason isn't bundling electron-updater yet — releases are hand-cut. This
+// just informs the user when a newer GitHub Release exists so they can run
+// the install one-liner or download the DMG. Compare semver (no prereleases).
+
+function compareSemver(a, b) {
+  const parse = (v) => v.replace(/^v/, "").split(/[.-]/).map((n) => parseInt(n, 10) || 0);
+  const [aMaj, aMin, aPatch] = parse(a);
+  const [bMaj, bMin, bPatch] = parse(b);
+  if (aMaj !== bMaj) return aMaj - bMaj;
+  if (aMin !== bMin) return aMin - bMin;
+  return aPatch - bPatch;
+}
+
+ipcMain.handle("get-app-version", () => app.getVersion());
+
+ipcMain.handle("check-update", async () => {
+  const current = app.getVersion();
+  try {
+    const res = await fetchWithTimeout(`https://api.github.com/repos/${MASON_REPO}/releases/latest`, {
+      headers: { "User-Agent": "mason-update-check", Accept: "application/vnd.github+json" },
+    }, 10000);
+    if (!res.ok) {
+      console.error(`[UPDATE] GitHub API HTTP ${res.status}`);
+      return { current, latest: null, hasUpdate: false, error: `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    const latest = (data.tag_name || "").replace(/^v/, "");
+    if (!latest) return { current, latest: null, hasUpdate: false, error: "no tag" };
+    const hasUpdate = compareSemver(latest, current) > 0;
+    return {
+      current,
+      latest,
+      hasUpdate,
+      releaseUrl: data.html_url || MASON_RELEASES_URL,
+      publishedAt: data.published_at,
+      notes: (data.body || "").slice(0, 800),
+    };
+  } catch (err) {
+    console.error("[UPDATE] check failed:", err.message);
+    return { current, latest: null, hasUpdate: false, error: err.message };
+  }
+});
+
+ipcMain.handle("open-release-page", (_event, url) => {
+  const target = url || MASON_RELEASES_URL;
+  // Validate before shelling out — only ever open github.com URLs.
+  if (!/^https:\/\/github\.com\//.test(target)) return false;
+  shell.openExternal(target);
+  return true;
 });
 
 // --- Databricks CLI: detect & install ---

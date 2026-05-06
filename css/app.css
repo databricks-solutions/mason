@@ -953,3 +953,28 @@
         to   { background-position: 32px 0; }
       }
       #devkitProgress .onboarding-progress-fill { width: 100%; }
+
+      /* Sidebar version label (faint, sits in the settings row next to the cog) */
+      .sidebar-version {
+        font-size: 0.7rem;
+        opacity: 0.35;
+        font-variant-numeric: tabular-nums;
+        margin-right: auto;
+        user-select: text;
+      }
+      body.dark .sidebar-version { opacity: 0.4; }
+
+      /* Update button gets a subtle blue dot when shown */
+      .settings-update { position: relative; color: #007aff !important; }
+      .settings-update::after {
+        content: "";
+        position: absolute;
+        top: 5px; right: 5px;
+        width: 6px; height: 6px;
+        border-radius: 50%;
+        background: #007aff;
+      }
+      body.dark .settings-update { color: #4a9bff !important; }
+
+      /* Notes block in update modal */
+      body.dark #updateNotes { background: rgba(255,255,255,0.05); }

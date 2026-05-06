@@ -38,6 +38,15 @@ function initDomRefs() {
     settingsView: document.getElementById("settingsView"),
     settingsBtn: document.getElementById("settingsBtn"),
     settingsViewClose: document.getElementById("settingsViewClose"),
+    sidebarVersion: document.getElementById("sidebarVersion"),
+    updateBtn: document.getElementById("updateBtn"),
+    updateModal: document.getElementById("updateModal"),
+    updateLatest: document.getElementById("updateLatest"),
+    updateCurrent: document.getElementById("updateCurrent"),
+    updateNotes: document.getElementById("updateNotes"),
+    updateOpen: document.getElementById("updateOpen"),
+    updateLater: document.getElementById("updateLater"),
+    updateSkip: document.getElementById("updateSkip"),
     toolsModal: document.getElementById("toolsModal"),
     toolsModalList: document.getElementById("toolsModalList"),
     toolsModalClose: document.getElementById("toolsModalClose"),
@@ -495,6 +504,27 @@ function initEventListeners() {
   el.settingsBtn.addEventListener("click", () => switchToSettingsView());
   el.settingsViewClose.addEventListener("click", () => switchToChatsTab());
 
+  // Update modal — populated by checkForUpdates() at startup if a newer
+  // GitHub release is available. Buttons: Open release page (browser),
+  // Skip this version (suppress until next bump), Later (just close).
+  function closeUpdateModal() { el.updateModal.classList.remove("open"); }
+  el.updateLater.addEventListener("click", closeUpdateModal);
+  el.updateSkip.addEventListener("click", () => {
+    const skipped = el.updateLatest.textContent.replace(/^v/, "");
+    if (skipped) localStorage.setItem("mason-skipped-update", skipped);
+    closeUpdateModal();
+  });
+  el.updateOpen.addEventListener("click", async () => {
+    const url = el.updateOpen.dataset.url;
+    if (url) await window.api.openReleasePage(url);
+    closeUpdateModal();
+  });
+  el.updateModal.addEventListener("click", (e) => {
+    if (e.target === el.updateModal) closeUpdateModal();
+  });
+  // Update icon in sidebar reopens the modal once Mason has detected a new release.
+  el.updateBtn.addEventListener("click", () => el.updateModal.classList.add("open"));
+
   el.autoLoadToggle.addEventListener("change", async () => {
     mason.autoLoadTools = el.autoLoadToggle.checked;
     updateToggleVisual();
@@ -835,6 +865,39 @@ async function initApp() {
       await saveCurrentChat();
     }
   }, 10000);
+
+  // Show current version in the sidebar + check GitHub for a newer release.
+  // Best-effort; never blocks chat. Suppressed for offline launches and for
+  // versions the user explicitly skipped.
+  try {
+    const v = await window.api.getAppVersion();
+    if (v && el.sidebarVersion) el.sidebarVersion.textContent = `v${v}`;
+  } catch (_) {}
+  if (navigator.onLine) {
+    checkForUpdates().catch((e) => console.error("[UPDATE]", e.message));
+  }
+}
+
+async function checkForUpdates() {
+  const result = await window.api.checkUpdate();
+  if (!result || !result.hasUpdate) return;
+  const skipped = localStorage.getItem("mason-skipped-update");
+  if (skipped === result.latest) {
+    console.log(`[UPDATE] Skipping prompt for ${result.latest} (user-skipped).`);
+    // Still show the indicator on the cog so they can manually open it later.
+    if (mason.el.updateBtn) mason.el.updateBtn.style.display = "";
+    return;
+  }
+  // Populate + show modal.
+  mason.el.updateLatest.textContent = `v${result.latest}`;
+  mason.el.updateCurrent.textContent = `v${result.current}`;
+  mason.el.updateOpen.dataset.url = result.releaseUrl || "";
+  if (result.notes) {
+    mason.el.updateNotes.textContent = result.notes;
+    mason.el.updateNotes.style.display = "";
+  }
+  mason.el.updateBtn.style.display = "";
+  mason.el.updateModal.classList.add("open");
 }
 
 // Global error handlers
