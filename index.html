@@ -180,6 +180,20 @@
             <div id="cliStatus" style="font-size:0.72rem;opacity:0.55;margin-top:8px;"></div>
           </div>
           <div style="margin-bottom:18px;">
+            <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">Databricks AI Dev Kit MCP</div>
+            <div style="font-size:0.78rem;opacity:0.65;margin-bottom:8px;">Adds Databricks-specific MCP tools (jobs, dashboards, UC, model serving, …) to every chat. Hosted at <a href="https://github.com/databricks-solutions/ai-dev-kit" target="_blank">databricks-solutions/ai-dev-kit</a>.</div>
+            <div id="devkitStatus" style="font-size:0.78rem;margin-bottom:8px;">Checking…</div>
+            <div id="devkitButtons" style="display:flex;gap:6px;margin-bottom:6px;">
+              <button class="modal-btn primary" id="devkitInstallBtn" style="flex:1;display:none;">Install</button>
+              <button class="modal-btn secondary" id="devkitUninstallBtn" style="flex:1;display:none;">Uninstall</button>
+            </div>
+            <div id="devkitProgress" class="onboarding-progress" style="display:none;margin-top:8px;">
+              <div class="onboarding-progress-bar"><div class="onboarding-progress-fill" id="devkitProgressFill" style="width:auto;background:repeating-linear-gradient(45deg,#007aff,#007aff 8px,#5aa1ff 8px,#5aa1ff 16px);animation:devkit-stripe 1s linear infinite;"></div></div>
+              <div class="onboarding-progress-text" id="devkitProgressText">Starting…</div>
+            </div>
+            <div id="devkitError" style="display:none;color:#c00;font-size:0.78rem;margin-top:6px;"></div>
+          </div>
+          <div style="margin-bottom:18px;">
             <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">Custom Model Endpoints</div>
             <div id="endpointsList" style="margin-bottom:10px;"></div>
             <div style="display:flex;gap:6px;margin-bottom:6px;">

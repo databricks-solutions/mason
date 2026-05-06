@@ -45,4 +45,9 @@ contextBridge.exposeInMainWorld("api", {
   removeProfile: (name) => ipcRenderer.invoke("remove-profile", name),
   settingsLoad: () => ipcRenderer.invoke("settings-load"),
   settingsSave: (partial) => ipcRenderer.invoke("settings-save", partial),
+  detectDevkit: () => ipcRenderer.invoke("detect-devkit"),
+  installDevkit: (params) => ipcRenderer.invoke("install-devkit", params),
+  uninstallDevkit: () => ipcRenderer.invoke("uninstall-devkit"),
+  onDevkitInstallProgress: (callback) => ipcRenderer.on("devkit-install-progress", (_event, payload) => callback(payload)),
+  removeDevkitInstallListeners: () => ipcRenderer.removeAllListeners("devkit-install-progress"),
 });

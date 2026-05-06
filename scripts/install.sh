@@ -173,4 +173,83 @@ else
   esac
 fi
 
+# --- Optional: Databricks AI Dev Kit (MCP server + skills) ---
+# Wires Mason up to the ai-dev-kit MCP for richer Databricks tooling
+# (jobs, dashboards, UC, model serving, etc.). Opt-in.
+DEVKIT_DIR="$HOME/.ai-dev-kit"
+MASON_CONFIG_DIR="$HOME/.mason/config"
+MCP_SERVERS_FILE="$MASON_CONFIG_DIR/mcp_servers.json"
+
+install_uv_if_needed() {
+  if command -v uv >/dev/null 2>&1; then
+    ok "uv already installed at $(command -v uv)"
+    return 0
+  fi
+  log "Installing uv (Python package manager) to ~/.local/bin..."
+  curl -fsSL https://astral.sh/uv/install.sh | sh || err "uv install failed."
+}
+
+register_devkit_with_mason() {
+  # Idempotently append/replace the ai-dev-kit stdio entry in Mason's global
+  # MCP config so it auto-connects on next launch. Uses node (already installed
+  # alongside Mason) for safe JSON manipulation; falls back to a manual write
+  # if node isn't on PATH for some reason.
+  mkdir -p "$MASON_CONFIG_DIR"
+  local venv_python="$DEVKIT_DIR/.venv/bin/python"
+  local mcp_entry="$DEVKIT_DIR/repo/databricks-mcp-server/run_server.py"
+  local profile="${DEVKIT_PROFILE:-DEFAULT}"
+
+  if command -v node >/dev/null 2>&1; then
+    node - "$MCP_SERVERS_FILE" "$venv_python" "$mcp_entry" "$profile" <<'NODEEOF' || warn "Could not register MCP entry with Mason."
+const fs = require("fs");
+const [, , file, command, mcpEntry, profile] = process.argv;
+let cfg = { http: [], stdio: [] };
+if (fs.existsSync(file)) {
+  try {
+    const data = JSON.parse(fs.readFileSync(file, "utf-8"));
+    if (Array.isArray(data)) cfg = { http: data, stdio: [] };
+    else cfg = { http: data.http || [], stdio: data.stdio || [] };
+  } catch (_) {}
+}
+const others = (cfg.stdio || []).filter((s) => s.name !== "ai-dev-kit");
+cfg.stdio = [...others, {
+  name: "ai-dev-kit",
+  command,
+  args: [mcpEntry],
+  env: { DATABRICKS_CONFIG_PROFILE: profile },
+  enabledByDefault: true,
+}];
+fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
+console.log("Registered ai-dev-kit MCP with Mason at " + file);
+NODEEOF
+    ok "AI Dev Kit MCP registered with Mason"
+  else
+    warn "node not found — couldn't auto-register MCP. Add it manually in Settings → MCP."
+  fi
+}
+
+if [[ "${MASON_NO_DEVKIT:-0}" == "1" ]]; then
+  log "Skipping Databricks AI Dev Kit (MASON_NO_DEVKIT=1)"
+elif [[ -d "$DEVKIT_DIR/repo" ]]; then
+  ok "Databricks AI Dev Kit already installed at $DEVKIT_DIR"
+  register_devkit_with_mason
+else
+  if [[ -t 0 ]]; then
+    printf '  \033[34m›\033[0m Install Databricks AI Dev Kit MCP for richer Databricks tooling? [y/N] '
+    read -r ans
+  else
+    ans="${MASON_INSTALL_DEVKIT:-n}"
+  fi
+  if [[ "$ans" =~ ^[Yy]$ ]]; then
+    install_uv_if_needed
+    log "Installing Databricks AI Dev Kit (~30s)..."
+    if bash <(curl -fsSL https://raw.githubusercontent.com/databricks-solutions/ai-dev-kit/main/install.sh) \
+         --global --silent --tools ""; then
+      register_devkit_with_mason
+    else
+      warn "AI Dev Kit install hit an issue; you can retry from Mason → Settings."
+    fi
+  fi
+fi
+
 ok "Launch with: open -a $APP_NAME"

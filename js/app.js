@@ -48,6 +48,12 @@ function initDomRefs() {
     profileAddBtn: document.getElementById("profileAddBtn"),
     profileAddError: document.getElementById("profileAddError"),
     cliStatus: document.getElementById("cliStatus"),
+    devkitStatus: document.getElementById("devkitStatus"),
+    devkitInstallBtn: document.getElementById("devkitInstallBtn"),
+    devkitUninstallBtn: document.getElementById("devkitUninstallBtn"),
+    devkitProgress: document.getElementById("devkitProgress"),
+    devkitProgressText: document.getElementById("devkitProgressText"),
+    devkitError: document.getElementById("devkitError"),
     endpointModel: document.getElementById("endpointModel"),
     endpointName: document.getElementById("endpointName"),
     endpointUrl: document.getElementById("endpointUrl"),
@@ -241,6 +247,27 @@ async function renderProfilesList() {
       ? `Databricks CLI: ${cli.path}`
       : `Databricks CLI: not installed. New profiles will require it — restart Mason or reinstall to set it up.`;
   }
+  // Refresh ai-dev-kit status.
+  await renderDevkitStatus();
+}
+
+// --- Settings: ai-dev-kit MCP ---
+
+async function renderDevkitStatus() {
+  if (!mason.el.devkitStatus) return;
+  const result = await window.api.detectDevkit();
+  if (result.installed) {
+    const v = result.version ? ` (${result.version})` : "";
+    mason.el.devkitStatus.innerHTML = `<span style="color:#4caf50;">●</span> Installed${escapeHtml(v)} at <code style="font-size:0.78rem;">~/.ai-dev-kit</code>`;
+    mason.el.devkitInstallBtn.style.display = "none";
+    mason.el.devkitUninstallBtn.style.display = "";
+  } else {
+    mason.el.devkitStatus.innerHTML = `<span style="opacity:0.5;">○</span> Not installed`;
+    mason.el.devkitInstallBtn.style.display = "";
+    mason.el.devkitUninstallBtn.style.display = "none";
+  }
+  mason.el.devkitProgress.style.display = "none";
+  mason.el.devkitError.style.display = "none";
 }
 
 // --- Tools modal ---
@@ -488,6 +515,68 @@ function initEventListeners() {
     const config = await window.api.workspaceLoad(profile);
     config.defaultModel = mason.defaultModel;
     await window.api.workspaceSave({ profile, config });
+  });
+
+  // ai-dev-kit MCP install / uninstall
+  el.devkitInstallBtn.addEventListener("click", async () => {
+    el.devkitError.style.display = "none";
+    el.devkitInstallBtn.disabled = true;
+    el.devkitInstallBtn.textContent = "Installing…";
+    el.devkitProgress.style.display = "";
+    el.devkitProgressText.textContent = "Starting…";
+    const onProgress = ({ phase, line }) => {
+      const labels = {
+        "uv-check": "Checking for uv",
+        "uv-install": "Installing uv",
+        "devkit-install": "Installing AI Dev Kit",
+        "register": "Registering with Mason",
+        "done": "Done",
+        "error": "Error",
+      };
+      el.devkitProgressText.textContent = `${labels[phase] || phase}${line ? `: ${line.slice(0, 80)}` : ""}`;
+    };
+    window.api.onDevkitInstallProgress(onProgress);
+    try {
+      const profile = currentProfileName();
+      await window.api.installDevkit({ profile });
+      // Reload global MCP config + connect the new server in-place so the user
+      // doesn't need to restart Mason.
+      mason.autoConnectDone = false;
+      if (typeof autoConnectMcp === "function") await autoConnectMcp();
+      if (typeof renderMcpServerList === "function") renderMcpServerList();
+      if (typeof renderMcpBadges === "function") renderMcpBadges();
+    } catch (e) {
+      el.devkitError.style.display = "";
+      el.devkitError.textContent = e.message || "Install failed.";
+    } finally {
+      window.api.removeDevkitInstallListeners();
+      el.devkitInstallBtn.disabled = false;
+      el.devkitInstallBtn.textContent = "Install";
+      await renderDevkitStatus();
+    }
+  });
+
+  el.devkitUninstallBtn.addEventListener("click", async () => {
+    if (!confirm("Remove the Databricks AI Dev Kit (~/.ai-dev-kit) and unregister its MCP server from Mason?")) return;
+    el.devkitUninstallBtn.disabled = true;
+    el.devkitUninstallBtn.textContent = "Removing…";
+    try {
+      // Disconnect the running stdio server before deleting its files.
+      const running = mason.mcpServers.find((s) => s.configName === "ai-dev-kit");
+      if (running && running.key) {
+        try { await window.api.mcpStdioDisconnect({ key: running.key }); } catch (_) {}
+        mason.mcpServers = mason.mcpServers.filter((s) => s !== running);
+      }
+      await window.api.uninstallDevkit();
+      if (typeof renderMcpServerList === "function") renderMcpServerList();
+      if (typeof renderMcpBadges === "function") renderMcpBadges();
+    } catch (e) {
+      alert(`Uninstall failed: ${e.message}`);
+    } finally {
+      el.devkitUninstallBtn.disabled = false;
+      el.devkitUninstallBtn.textContent = "Uninstall";
+      await renderDevkitStatus();
+    }
   });
 
   el.profileAddBtn.addEventListener("click", async () => {

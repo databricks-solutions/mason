@@ -20,6 +20,16 @@ const MCP_SERVERS_FILE = path.join(CONFIG_DIR, "mcp_servers.json");
 const CLI_PATH_FILE = path.join(CONFIG_DIR, "cli_path.json");
 const SETTINGS_FILE = path.join(CONFIG_DIR, "settings.json");
 const DATABRICKSCFG_PATH = path.join(os.homedir(), ".databrickscfg");
+// ai-dev-kit (https://github.com/databricks-solutions/ai-dev-kit) installs to a
+// fixed location managed by its upstream installer. We just consume what's there.
+const DEVKIT_DIR = path.join(os.homedir(), ".ai-dev-kit");
+const DEVKIT_REPO_DIR = path.join(DEVKIT_DIR, "repo");
+const DEVKIT_VENV_PYTHON = path.join(DEVKIT_DIR, ".venv", "bin", "python");
+const DEVKIT_MCP_ENTRY = path.join(DEVKIT_REPO_DIR, "databricks-mcp-server", "run_server.py");
+const DEVKIT_VERSION_FILE = path.join(DEVKIT_REPO_DIR, ".ai-dev-kit", "version");
+const DEVKIT_INSTALL_URL = "https://raw.githubusercontent.com/databricks-solutions/ai-dev-kit/main/install.sh";
+const UV_INSTALL_URL = "https://astral.sh/uv/install.sh";
+const MCP_NAME_DEVKIT = "ai-dev-kit";
 
 // Resolve full shell PATH for packaged app (macOS GUI apps don't inherit shell PATH)
 function getShellEnv() {
@@ -571,6 +581,158 @@ ipcMain.handle("settings-save", (_event, partial) => {
   const next = { ...readSettings(), ...partial };
   writeSettings(next);
   return next;
+});
+
+// --- ai-dev-kit (Databricks AI Dev Kit) install / detect / uninstall ---
+//
+// The upstream installer lives at github.com/databricks-solutions/ai-dev-kit;
+// it provisions a Python venv + clones the repo at ~/.ai-dev-kit and installs
+// MCP server + skills. We shell out to it (don't reimplement) and then
+// register the resulting stdio MCP server with Mason.
+
+function readDevkitVersion() {
+  try {
+    if (fs.existsSync(DEVKIT_VERSION_FILE)) {
+      return fs.readFileSync(DEVKIT_VERSION_FILE, "utf-8").trim();
+    }
+  } catch (_) {}
+  return null;
+}
+
+ipcMain.handle("detect-devkit", () => {
+  const installed = fs.existsSync(DEVKIT_REPO_DIR) && fs.existsSync(DEVKIT_VENV_PYTHON) && fs.existsSync(DEVKIT_MCP_ENTRY);
+  return {
+    installed,
+    repoPath: DEVKIT_REPO_DIR,
+    venvPython: DEVKIT_VENV_PYTHON,
+    mcpEntry: DEVKIT_MCP_ENTRY,
+    version: installed ? readDevkitVersion() : null,
+  };
+});
+
+// Append-or-replace the ai-dev-kit stdio entry in the global MCP config so
+// Mason auto-connects it on next launch.
+function registerDevkitMcp(profile) {
+  let cfg = { http: [], stdio: [] };
+  if (fs.existsSync(MCP_SERVERS_FILE)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(MCP_SERVERS_FILE, "utf-8"));
+      if (Array.isArray(data)) cfg = { http: data, stdio: [] };
+      else cfg = { http: data.http || [], stdio: data.stdio || [] };
+    } catch (_) {}
+  }
+  const entry = {
+    name: MCP_NAME_DEVKIT,
+    command: DEVKIT_VENV_PYTHON,
+    args: [DEVKIT_MCP_ENTRY],
+    env: { DATABRICKS_CONFIG_PROFILE: profile || "DEFAULT" },
+    enabledByDefault: true,
+  };
+  const others = (cfg.stdio || []).filter((s) => s.name !== MCP_NAME_DEVKIT);
+  cfg.stdio = [...others, entry];
+  if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.writeFileSync(MCP_SERVERS_FILE, JSON.stringify(cfg, null, 2));
+  return entry;
+}
+
+function unregisterDevkitMcp() {
+  if (!fs.existsSync(MCP_SERVERS_FILE)) return false;
+  try {
+    const data = JSON.parse(fs.readFileSync(MCP_SERVERS_FILE, "utf-8"));
+    if (Array.isArray(data)) return false;
+    const before = (data.stdio || []).length;
+    data.stdio = (data.stdio || []).filter((s) => s.name !== MCP_NAME_DEVKIT);
+    if (data.stdio.length === before) return false;
+    fs.writeFileSync(MCP_SERVERS_FILE, JSON.stringify(data, null, 2));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Spawn `bash -lc "<cmd>"` so PATH lookups for uv/curl/git resolve via the
+// user's login shell (matches getShellEnv semantics). Stream stdout/stderr
+// lines to the renderer as devkit-install-progress events.
+function spawnInstallStep(win, cmd, phase) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("bash", ["-lc", cmd], { env: shellEnv });
+    const send = (line) => {
+      if (!line) return;
+      console.log(`[DEVKIT] ${phase}: ${line}`);
+      if (win && !win.isDestroyed()) win.webContents.send("devkit-install-progress", { phase, line });
+    };
+    let buffer = "";
+    const onChunk = (data) => {
+      buffer += data.toString();
+      let idx;
+      while ((idx = buffer.indexOf("\n")) !== -1) {
+        send(buffer.slice(0, idx).trimEnd());
+        buffer = buffer.slice(idx + 1);
+      }
+    };
+    proc.stdout.on("data", onChunk);
+    proc.stderr.on("data", onChunk);
+    proc.on("close", (code) => {
+      if (buffer.trim()) send(buffer.trim());
+      if (code === 0) resolve();
+      else reject(new Error(`${phase} failed (exit ${code})`));
+    });
+    proc.on("error", reject);
+  });
+}
+
+ipcMain.handle("install-devkit", async (event, { profile } = {}) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const send = (phase, line) => {
+    if (win && !win.isDestroyed()) win.webContents.send("devkit-install-progress", { phase, line });
+  };
+  try {
+    // 1. Ensure uv is installed (ai-dev-kit's installer requires it).
+    send("uv-check", "Checking for uv (Python package manager)…");
+    let hasUv = false;
+    try {
+      execSync("command -v uv", { env: shellEnv, timeout: 3000, stdio: "ignore" });
+      hasUv = true;
+    } catch (_) {}
+    if (!hasUv) {
+      send("uv-install", "Installing uv to ~/.local/bin…");
+      await spawnInstallStep(win, `curl -fsSL ${UV_INSTALL_URL} | sh`, "uv-install");
+    } else {
+      send("uv-check", "uv already installed");
+    }
+
+    // 2. Run the upstream ai-dev-kit installer. --tools "" tells it not to
+    //    wire itself into Claude Code/Cursor/etc — Mason consumes the MCP
+    //    directly via the global stdio config.
+    send("devkit-install", "Running Databricks AI Dev Kit installer…");
+    const profileArg = profile ? ` --profile "${profile.replace(/"/g, '\\"')}"` : "";
+    await spawnInstallStep(
+      win,
+      `bash <(curl -fsSL ${DEVKIT_INSTALL_URL}) --global --silent --tools ""${profileArg}`,
+      "devkit-install",
+    );
+
+    // 3. Register the MCP entry with Mason.
+    send("register", "Registering MCP server with Mason…");
+    const entry = registerDevkitMcp(profile || "DEFAULT");
+    send("done", "Installed");
+    return { installed: true, version: readDevkitVersion(), entry };
+  } catch (err) {
+    console.error("[DEVKIT] install failed:", err.message);
+    send("error", err.message);
+    throw new Error(`AI Dev Kit install failed: ${err.message}`);
+  }
+});
+
+ipcMain.handle("uninstall-devkit", async () => {
+  // Remove the MCP entry first (cheap, no chance of half-state).
+  unregisterDevkitMcp();
+  // Then remove the install dir if it exists.
+  if (fs.existsSync(DEVKIT_DIR)) {
+    fs.rmSync(DEVKIT_DIR, { recursive: true, force: true });
+  }
+  console.log("[DEVKIT] Uninstalled");
+  return { uninstalled: true };
 });
 
 ipcMain.handle("mcp-config-save", (_event, { profile, servers }) => {
