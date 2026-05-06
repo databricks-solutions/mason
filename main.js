@@ -18,6 +18,7 @@ const BIN_DIR = path.join(MASON_HOME, "bin");
 const WORKSPACES_FILE = path.join(CONFIG_DIR, "workspaces.json");
 const MCP_SERVERS_FILE = path.join(CONFIG_DIR, "mcp_servers.json");
 const CLI_PATH_FILE = path.join(CONFIG_DIR, "cli_path.json");
+const SETTINGS_FILE = path.join(CONFIG_DIR, "settings.json");
 const DATABRICKSCFG_PATH = path.join(os.homedir(), ".databrickscfg");
 
 // Resolve full shell PATH for packaged app (macOS GUI apps don't inherit shell PATH)
@@ -540,6 +541,36 @@ ipcMain.handle("mcp-global-config-save", (_event, { stdio }) => {
   existing.stdio = stdio;
   if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(MCP_SERVERS_FILE, JSON.stringify(existing, null, 2));
+});
+
+// --- Global app settings (preferences that aren't per-workspace) ---
+// Stored at ~/.mason/config/settings.json so they survive reinstalls and
+// are inspectable. Currently: darkMode, systemPrompt, autoLoadTools.
+
+const DEFAULT_SETTINGS = { darkMode: false, systemPrompt: "", autoLoadTools: true };
+
+function readSettings() {
+  if (!fs.existsSync(SETTINGS_FILE)) return { ...DEFAULT_SETTINGS };
+  try {
+    const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8"));
+    return { ...DEFAULT_SETTINGS, ...data };
+  } catch (_) {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function writeSettings(settings) {
+  if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+}
+
+ipcMain.handle("settings-load", () => readSettings());
+
+ipcMain.handle("settings-save", (_event, partial) => {
+  // Merge — callers may save just one key at a time.
+  const next = { ...readSettings(), ...partial };
+  writeSettings(next);
+  return next;
 });
 
 ipcMain.handle("mcp-config-save", (_event, { profile, servers }) => {

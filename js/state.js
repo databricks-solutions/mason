@@ -25,6 +25,10 @@ window.mason = {
   // Workspace
   autoLoadTools: true,
 
+  // Global preferences (loaded from ~/.mason/config/settings.json on startup)
+  settings: { darkMode: false, systemPrompt: "", autoLoadTools: true },
+  systemPrompt: "",
+
   // UI
   currentView: "chat", // "chat" | "dashboards" | "dashboard-detail"
   dashboardsList: [],

@@ -179,7 +179,7 @@ async function chatLoop(profile) {
     // Don't mutate mason.history — the prompt isn't part of the chat record,
     // it's a runtime preference that re-applies whenever the chat is loaded.
     const trimmed = trimHistory(mason.history);
-    const sysPrompt = (localStorage.getItem("mason-system-prompt") || "").trim();
+    const sysPrompt = (mason.systemPrompt || "").trim();
     const hasUserSystem = trimmed.some((m) => m.role === "system");
     const messagesToSend = sysPrompt && !hasUserSystem
       ? [{ role: "system", content: sysPrompt }, ...trimmed]

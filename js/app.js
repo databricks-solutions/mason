@@ -115,9 +115,8 @@ async function loadWorkspaceConfig() {
   const profile = currentProfileName();
   const config = await window.api.workspaceLoad(profile);
   // gatewayUrl in saved config is legacy — gateway is now derived from profile.host.
-  // Drop it on next save by not reading it.
+  // autoLoadTools also moved to the global settings.json (loaded in initApp).
   mason.customEndpoints = config.customEndpoints || [];
-  mason.autoLoadTools = config.autoLoadTools !== false;
   mason.defaultModel = config.defaultModel || null;
   if (mason.defaultModel) {
     mason.selectedModelValue = mason.defaultModel.value;
@@ -335,8 +334,9 @@ function initEventListeners() {
   // Sidebar toggle
   el.sidebarToggle.addEventListener("click", () => el.sidebar.classList.toggle("hidden"));
 
-  // Dark mode toggle (in Settings → preferences row, mirrors Auto-load styling).
-  // Persisted to localStorage so the choice survives restarts.
+  // Dark mode toggle. Persisted alongside other prefs in
+  // ~/.mason/config/settings.json (one-time migration from old localStorage
+  // values is handled in initApp).
   function applyDarkMode(isDark) {
     document.body.classList.toggle("dark", isDark);
     document.getElementById("hljs-light").disabled = isDark;
@@ -344,40 +344,39 @@ function initEventListeners() {
     el.darkModeTrack.style.background = isDark ? "#4caf50" : "#ccc";
     el.darkModeThumb.style.transform = isDark ? "translateX(20px)" : "translateX(0)";
   }
-  // Initial state: localStorage > existing body.dark class > light.
-  const stored = localStorage.getItem("mason-dark-mode");
-  const initialDark = stored === "1" || (stored === null && document.body.classList.contains("dark"));
-  el.darkModeToggle.checked = initialDark;
-  applyDarkMode(initialDark);
-  el.darkModeToggle.addEventListener("change", () => {
+  el.darkModeToggle.addEventListener("change", async () => {
     const isDark = el.darkModeToggle.checked;
     applyDarkMode(isDark);
-    localStorage.setItem("mason-dark-mode", isDark ? "1" : "0");
+    await window.api.settingsSave({ darkMode: isDark });
   });
 
   // Global system prompt — applies to every conversation across profiles.
-  // Stored in localStorage; chat.js prepends it as a system message at request
-  // time so it's never persisted into mason.history (and never displayed).
-  const SYSTEM_PROMPT_KEY = "mason-system-prompt";
+  // chat.js reads it at request time via window.mason.systemPrompt; we keep
+  // the live value mirrored there so chat.js doesn't have to re-read settings.
   function updateSystemPromptCount() {
     const len = el.systemPromptInput.value.length;
     el.systemPromptCount.textContent = `${len} / 3000`;
   }
-  el.systemPromptInput.value = localStorage.getItem(SYSTEM_PROMPT_KEY) || "";
-  updateSystemPromptCount();
   let systemPromptSaveTimer = null;
   el.systemPromptInput.addEventListener("input", () => {
     updateSystemPromptCount();
     el.systemPromptStatus.textContent = "Saving…";
     clearTimeout(systemPromptSaveTimer);
-    systemPromptSaveTimer = setTimeout(() => {
+    systemPromptSaveTimer = setTimeout(async () => {
       const value = el.systemPromptInput.value.trim();
-      if (value) localStorage.setItem(SYSTEM_PROMPT_KEY, value);
-      else localStorage.removeItem(SYSTEM_PROMPT_KEY);
+      mason.systemPrompt = value;
+      await window.api.settingsSave({ systemPrompt: value });
       el.systemPromptStatus.textContent = value ? "Saved" : "Cleared";
       setTimeout(() => { el.systemPromptStatus.textContent = ""; }, 1500);
     }, 400);
   });
+
+  // Apply settings loaded earlier in initApp. Done here (after DOM refs exist
+  // and applyDarkMode is defined) so init order stays clean.
+  applyDarkMode(!!mason.settings?.darkMode);
+  el.darkModeToggle.checked = !!mason.settings?.darkMode;
+  el.systemPromptInput.value = mason.settings?.systemPrompt || "";
+  updateSystemPromptCount();
 
   // Dashboard nav tabs
   el.navChats.addEventListener("click", switchToChatsTab);
@@ -472,10 +471,8 @@ function initEventListeners() {
   el.autoLoadToggle.addEventListener("change", async () => {
     mason.autoLoadTools = el.autoLoadToggle.checked;
     updateToggleVisual();
-    const profile = currentProfileName();
-    const config = await window.api.workspaceLoad(profile);
-    config.autoLoadTools = mason.autoLoadTools;
-    await window.api.workspaceSave({ profile, config });
+    // Persisted to global settings.json so the choice applies across profiles.
+    await window.api.settingsSave({ autoLoadTools: mason.autoLoadTools });
   });
 
   el.defaultModelSelect.addEventListener("change", async () => {
@@ -682,6 +679,28 @@ function initEventListeners() {
 async function initApp() {
   initDomRefs();
   setupMarkdown();
+
+  // Load global settings before wiring up the toggles so initial values exist
+  // when initEventListeners() applies them to the DOM.
+  mason.settings = await window.api.settingsLoad();
+
+  // One-time migration from the old localStorage keys that earlier versions
+  // wrote. If we have local values but settings.json is at defaults, copy them
+  // forward and clear the local ones so this only runs once.
+  const lsDark = localStorage.getItem("mason-dark-mode");
+  const lsPrompt = localStorage.getItem("mason-system-prompt");
+  if ((lsDark || lsPrompt) && !mason.settings.systemPrompt && !mason.settings.darkMode) {
+    const migrated = {
+      darkMode: lsDark === "1",
+      systemPrompt: lsPrompt || "",
+    };
+    mason.settings = await window.api.settingsSave(migrated);
+    if (lsDark) localStorage.removeItem("mason-dark-mode");
+    if (lsPrompt) localStorage.removeItem("mason-system-prompt");
+  }
+  mason.autoLoadTools = mason.settings.autoLoadTools !== false;
+  mason.systemPrompt = mason.settings.systemPrompt || "";
+
   initEventListeners();
   initDashboardListener();
 

@@ -43,4 +43,6 @@ contextBridge.exposeInMainWorld("api", {
   removeCliInstallListeners: () => ipcRenderer.removeAllListeners("cli-install-progress"),
   addProfile: (params) => ipcRenderer.invoke("add-profile", params),
   removeProfile: (name) => ipcRenderer.invoke("remove-profile", name),
+  settingsLoad: () => ipcRenderer.invoke("settings-load"),
+  settingsSave: (partial) => ipcRenderer.invoke("settings-save", partial),
 });
