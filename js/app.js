@@ -819,6 +819,21 @@ async function initApp() {
   initDomRefs();
   setupMarkdown();
 
+  // Render the sidebar version IMMEDIATELY after DOM refs exist, fire-and-forget
+  // so a later initApp throw can't strand the label on its placeholder.
+  window.api.getAppVersion()
+    .then((v) => {
+      console.log(`[VERSION] getAppVersion returned: ${JSON.stringify(v)}`);
+      const el = document.getElementById("sidebarVersion");
+      if (v && el) el.textContent = `v${v}`;
+    })
+    .catch((e) => console.error("[VERSION] getAppVersion failed:", e.message));
+  if (navigator.onLine) {
+    Promise.resolve()
+      .then(() => checkForUpdates())
+      .catch((e) => console.error("[UPDATE]", e.message));
+  }
+
   // Load global settings before wiring up the toggles so initial values exist
   // when initEventListeners() applies them to the DOM.
   mason.settings = await window.api.settingsLoad();
@@ -842,20 +857,6 @@ async function initApp() {
 
   initEventListeners();
   initDashboardListener();
-
-  // Render the sidebar version label as early as possible — before profile/MCP
-  // boot so it shows even if those hang or fail.
-  try {
-    const v = await window.api.getAppVersion();
-    console.log(`[VERSION] getAppVersion returned: ${JSON.stringify(v)}`);
-    if (v && el.sidebarVersion) el.sidebarVersion.textContent = `v${v}`;
-  } catch (e) {
-    console.error("[VERSION] getAppVersion failed:", e.message);
-  }
-  // Update check is online-only and never blocks the UI.
-  if (navigator.onLine) {
-    checkForUpdates().catch((e) => console.error("[UPDATE]", e.message));
-  }
 
   await loadProfiles();
 
