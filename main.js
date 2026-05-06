@@ -347,6 +347,9 @@ ipcMain.handle("check-update", async () => {
       releaseUrl: data.html_url || MASON_RELEASES_URL,
       publishedAt: data.published_at,
       notes: (data.body || "").slice(0, 800),
+      // Surface auto-update capability so the renderer knows whether to show
+      // the "Update now" button vs only "Open release page".
+      autoUpdateSupported: process.platform === "darwin" && app.isPackaged,
     };
   } catch (err) {
     console.error("[UPDATE] check failed:", err.message);
@@ -360,6 +363,49 @@ ipcMain.handle("open-release-page", (_event, url) => {
   if (!/^https:\/\/github\.com\//.test(target)) return false;
   shell.openExternal(target);
   return true;
+});
+
+// Run the install one-liner detached, then relaunch Mason. Mason quits while
+// the script runs so install.sh's `rm -rf /Applications/Mason.app` can
+// succeed. macOS only — Windows/Linux installers don't have a single-liner.
+ipcMain.handle("apply-update", () => {
+  if (process.platform !== "darwin") {
+    return { ok: false, error: "Auto-update only supported on macOS today." };
+  }
+  if (!app.isPackaged) {
+    return { ok: false, error: "Auto-update is disabled in dev mode (npm start). Quit and rerun npm start manually." };
+  }
+  const logsDir = path.join(MASON_HOME, "logs");
+  if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+  const logFile = path.join(logsDir, `update-${Date.now()}.log`);
+  console.log(`[UPDATE] Spawning installer; log -> ${logFile}`);
+  // - sleep gives Mason time to fully exit before install.sh tries to nuke
+  //   /Applications/Mason.app.
+  // - install.sh is the same canonical one-liner users run from terminal.
+  // - On success: relaunch via `open -a Mason`. On failure: native dialog so
+  //   the user isn't left guessing.
+  const installUrl = "https://raw.githubusercontent.com/databricks-solutions/mason/main/scripts/install.sh";
+  const script = [
+    `set -e`,
+    `sleep 3`,
+    `echo "[mason-update] starting at $(date)" >> "${logFile}"`,
+    `if curl -fsSL ${installUrl} | bash >> "${logFile}" 2>&1; then`,
+    `  echo "[mason-update] install ok, relaunching" >> "${logFile}"`,
+    `  open -a Mason`,
+    `else`,
+    `  echo "[mason-update] install FAILED" >> "${logFile}"`,
+    `  osascript -e 'display dialog "Mason update failed. See ${logFile.replace(/"/g, '\\"')} for details." buttons {"OK"} default button 1 with icon caution with title "Mason update"' || true`,
+    `fi`,
+  ].join("\n");
+  const proc = spawn("bash", ["-c", script], {
+    detached: true,
+    stdio: "ignore",
+    env: shellEnv,
+  });
+  proc.unref();
+  // Quit on the next tick so this IPC reply still gets back to the renderer.
+  setTimeout(() => app.quit(), 100);
+  return { ok: true, logFile };
 });
 
 // --- Databricks CLI: detect & install ---

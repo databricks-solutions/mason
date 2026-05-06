@@ -45,6 +45,7 @@ function initDomRefs() {
     updateCurrent: document.getElementById("updateCurrent"),
     updateNotes: document.getElementById("updateNotes"),
     updateOpen: document.getElementById("updateOpen"),
+    updateNow: document.getElementById("updateNow"),
     updateLater: document.getElementById("updateLater"),
     updateSkip: document.getElementById("updateSkip"),
     toolsModal: document.getElementById("toolsModal"),
@@ -519,6 +520,26 @@ function initEventListeners() {
     if (url) await window.api.openReleasePage(url);
     closeUpdateModal();
   });
+  el.updateNow.addEventListener("click", async () => {
+    const target = el.updateLatest.textContent;
+    if (!confirm(`Mason will quit and the installer will run in the background. Mason ${target} will relaunch automatically when finished (~1 minute).`)) return;
+    el.updateNow.disabled = true;
+    el.updateNow.textContent = "Updating…";
+    try {
+      const res = await window.api.applyUpdate();
+      if (!res || !res.ok) {
+        alert(res?.error || "Auto-update failed.");
+        el.updateNow.disabled = false;
+        el.updateNow.textContent = "Update now";
+      }
+      // On success, main.js initiates app.quit(); the modal stays up briefly
+      // until the window closes. No further UI needed here.
+    } catch (e) {
+      alert(`Auto-update failed: ${e.message}`);
+      el.updateNow.disabled = false;
+      el.updateNow.textContent = "Update now";
+    }
+  });
   el.updateModal.addEventListener("click", (e) => {
     if (e.target === el.updateModal) closeUpdateModal();
   });
@@ -899,6 +920,11 @@ async function checkForUpdates() {
   if (result.notes) {
     mason.el.updateNotes.textContent = result.notes;
     mason.el.updateNotes.style.display = "";
+  }
+  // Show the in-app update button only on macOS packaged builds; everywhere
+  // else the user opens the release page and downloads manually.
+  if (result.autoUpdateSupported) {
+    mason.el.updateNow.style.display = "";
   }
   mason.el.updateBtn.style.display = "";
   mason.el.updateModal.classList.add("open");

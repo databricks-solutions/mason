@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld("api", {
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   checkUpdate: () => ipcRenderer.invoke("check-update"),
   openReleasePage: (url) => ipcRenderer.invoke("open-release-page", url),
+  applyUpdate: () => ipcRenderer.invoke("apply-update"),
   detectCli: () => ipcRenderer.invoke("detect-cli"),
   installCli: () => ipcRenderer.invoke("install-cli"),
   onCliInstallProgress: (callback) => ipcRenderer.on("cli-install-progress", (_event, payload) => callback(payload)),
