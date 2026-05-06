@@ -483,9 +483,31 @@ ipcMain.handle("remove-profile", (_event, name) => {
   fs.writeFileSync(DATABRICKSCFG_PATH, text, { mode: 0o600 });
   // Drop any cached token for that profile.
   clearTokenCache(name);
+  // Also drop the matching entry from Mason's per-profile workspace config —
+  // it's keyed by profile name and would otherwise stay as orphaned data.
+  const workspaces = loadWorkspaces();
+  if (Object.prototype.hasOwnProperty.call(workspaces, name)) {
+    delete workspaces[name];
+    saveWorkspaces(workspaces);
+    console.log(`[PROFILE] Also removed Mason workspace entry for [${name}]`);
+  }
   console.log(`[PROFILE] Removed profile [${name}]`);
   return true;
 });
+
+// Garbage-collect any workspaces.json entries whose profile no longer exists in
+// ~/.databrickscfg. Cheap (just a Set diff) and only writes when something
+// actually changed, so safe to run on every startup.
+function gcOrphanedWorkspaceEntries() {
+  if (!fs.existsSync(WORKSPACES_FILE)) return;
+  const workspaces = loadWorkspaces();
+  const known = new Set(parseDatabricksCfg().map((p) => p.name));
+  const orphans = Object.keys(workspaces).filter((name) => !known.has(name));
+  if (orphans.length === 0) return;
+  for (const name of orphans) delete workspaces[name];
+  saveWorkspaces(workspaces);
+  console.log(`[WORKSPACE] GC removed ${orphans.length} orphaned entr${orphans.length === 1 ? "y" : "ies"}: ${orphans.join(", ")}`);
+}
 
 // --- Workspace config persistence ---
 // workspaces.json: { "PROFILE_NAME": { gatewayUrl, mcpServers[], customEndpoints[] }, ... }
@@ -619,18 +641,20 @@ ipcMain.handle("detect-devkit", () => {
 // audit views can attribute calls back to Mason even when the leading product
 // token stays as `databricks-ai-dev-kit`.
 //
-// Intentionally does NOT set DATABRICKS_CONFIG_PROFILE — let the SDK fall
-// through to its normal resolution chain (DATABRICKS_HOST/TOKEN env, default
-// profile in ~/.databrickscfg, etc.). That way users can change Mason's
-// active profile without restarting the MCP subprocess.
-function devkitEnv() {
+// Pins DATABRICKS_CONFIG_PROFILE so the SDK's auth chain resolves
+// deterministically. Without it, profiles using `auth_type = databricks-cli`
+// can't construct credentials (the SDK doesn't auto-discover DEFAULT in all
+// scenarios). Tradeoff: a profile change in Mason doesn't propagate to the
+// running MCP subprocess until the user reinstalls or restarts Mason.
+function devkitEnv(profile) {
   return {
+    DATABRICKS_CONFIG_PROFILE: profile || "DEFAULT",
     DATABRICKS_SDK_UPSTREAM: "mason",
     DATABRICKS_SDK_UPSTREAM_VERSION: app.getVersion(),
   };
 }
 
-function registerDevkitMcp() {
+function registerDevkitMcp(profile) {
   let cfg = { http: [], stdio: [] };
   if (fs.existsSync(MCP_SERVERS_FILE)) {
     try {
@@ -643,7 +667,7 @@ function registerDevkitMcp() {
     name: MCP_NAME_DEVKIT,
     command: DEVKIT_VENV_PYTHON,
     args: [DEVKIT_MCP_ENTRY],
-    env: devkitEnv(),
+    env: devkitEnv(profile),
     enabledByDefault: true,
   };
   const others = (cfg.stdio || []).filter((s) => s.name !== MCP_NAME_DEVKIT);
@@ -667,10 +691,12 @@ function migrateDevkitMcpEntry() {
   const idx = stdio.findIndex((s) => s.name === MCP_NAME_DEVKIT);
   if (idx === -1) return;
   const current = stdio[idx];
-  const desired = devkitEnv();
+  // Preserve whatever profile was previously pinned (or default to DEFAULT).
+  const pinnedProfile = current.env?.DATABRICKS_CONFIG_PROFILE || "DEFAULT";
+  const desired = devkitEnv(pinnedProfile);
   const needsMigrate =
     !current.env
-    || current.env.DATABRICKS_CONFIG_PROFILE !== undefined
+    || current.env.DATABRICKS_CONFIG_PROFILE !== desired.DATABRICKS_CONFIG_PROFILE
     || current.env.DATABRICKS_SDK_UPSTREAM !== desired.DATABRICKS_SDK_UPSTREAM
     || current.env.DATABRICKS_SDK_UPSTREAM_VERSION !== desired.DATABRICKS_SDK_UPSTREAM_VERSION;
   if (!needsMigrate) return;
@@ -759,7 +785,7 @@ ipcMain.handle("install-devkit", async (event, { profile } = {}) => {
 
     // 3. Register the MCP entry with Mason.
     send("register", "Registering MCP server with Mason…");
-    const entry = registerDevkitMcp();
+    const entry = registerDevkitMcp(profile || "DEFAULT");
     send("done", "Installed");
     return { installed: true, version: readDevkitVersion(), entry };
   } catch (err) {
@@ -811,7 +837,14 @@ function spawnStdioServer(config) {
   }
 
   console.log(`[MCP-STDIO] Spawning: ${config.command} ${(config.args || []).join(" ")}`);
-  const env = { ...process.env, ...(config.env || {}) };
+  // Use the resolved login-shell PATH (shellEnv) instead of Electron's bare
+  // process.env. macOS GUI apps don't inherit the user's shell PATH, so
+  // children spawned with raw process.env can't find `databricks`,
+  // `git`, etc. — which breaks any MCP server that shells out (ai-dev-kit's
+  // databricks-cli auth path is the canonical case). Also prepend
+  // ~/.mason/bin so a Mason-managed Databricks CLI is findable.
+  const augmentedPath = [BIN_DIR, shellEnv.PATH].filter(Boolean).join(":");
+  const env = { ...shellEnv, PATH: augmentedPath, ...(config.env || {}) };
   const proc = spawn(config.command, config.args || [], {
     env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -1714,6 +1747,9 @@ app.whenReady().then(() => {
   // One-time normalization for the ai-dev-kit MCP entry so attribution flows
   // through to warehouse query history without a manual reinstall.
   try { migrateDevkitMcpEntry(); } catch (e) { console.error("[DEVKIT] migrate failed:", e.message); }
+  // Drop workspaces.json entries whose Databricks profile was removed
+  // outside Mason (manual edit of ~/.databrickscfg, etc.).
+  try { gcOrphanedWorkspaceEntries(); } catch (e) { console.error("[WORKSPACE] GC failed:", e.message); }
   createWindow();
 });
 
