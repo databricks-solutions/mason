@@ -612,7 +612,25 @@ ipcMain.handle("detect-devkit", () => {
 
 // Append-or-replace the ai-dev-kit stdio entry in the global MCP config so
 // Mason auto-connects it on next launch.
-function registerDevkitMcp(profile) {
+//
+// Sets DATABRICKS_SDK_UPSTREAM / DATABRICKS_SDK_UPSTREAM_VERSION on the spawn
+// env. The Databricks Python SDK appends those to its User-Agent header (e.g.
+// `... upstream/mason upstream-version/1.3.0`), so warehouse query history /
+// audit views can attribute calls back to Mason even when the leading product
+// token stays as `databricks-ai-dev-kit`.
+//
+// Intentionally does NOT set DATABRICKS_CONFIG_PROFILE — let the SDK fall
+// through to its normal resolution chain (DATABRICKS_HOST/TOKEN env, default
+// profile in ~/.databrickscfg, etc.). That way users can change Mason's
+// active profile without restarting the MCP subprocess.
+function devkitEnv() {
+  return {
+    DATABRICKS_SDK_UPSTREAM: "mason",
+    DATABRICKS_SDK_UPSTREAM_VERSION: app.getVersion(),
+  };
+}
+
+function registerDevkitMcp() {
   let cfg = { http: [], stdio: [] };
   if (fs.existsSync(MCP_SERVERS_FILE)) {
     try {
@@ -625,7 +643,7 @@ function registerDevkitMcp(profile) {
     name: MCP_NAME_DEVKIT,
     command: DEVKIT_VENV_PYTHON,
     args: [DEVKIT_MCP_ENTRY],
-    env: { DATABRICKS_CONFIG_PROFILE: profile || "DEFAULT" },
+    env: devkitEnv(),
     enabledByDefault: true,
   };
   const others = (cfg.stdio || []).filter((s) => s.name !== MCP_NAME_DEVKIT);
@@ -633,6 +651,33 @@ function registerDevkitMcp(profile) {
   if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(MCP_SERVERS_FILE, JSON.stringify(cfg, null, 2));
   return entry;
+}
+
+// One-time migration: rewrite any pre-existing ai-dev-kit MCP entry to drop
+// DATABRICKS_CONFIG_PROFILE and add the upstream tracking vars. Safe to run
+// every startup (idempotent, no-op once the entry is normalized).
+function migrateDevkitMcpEntry() {
+  if (!fs.existsSync(MCP_SERVERS_FILE)) return;
+  let cfg;
+  try {
+    cfg = JSON.parse(fs.readFileSync(MCP_SERVERS_FILE, "utf-8"));
+  } catch (_) { return; }
+  if (Array.isArray(cfg)) return;
+  const stdio = cfg.stdio || [];
+  const idx = stdio.findIndex((s) => s.name === MCP_NAME_DEVKIT);
+  if (idx === -1) return;
+  const current = stdio[idx];
+  const desired = devkitEnv();
+  const needsMigrate =
+    !current.env
+    || current.env.DATABRICKS_CONFIG_PROFILE !== undefined
+    || current.env.DATABRICKS_SDK_UPSTREAM !== desired.DATABRICKS_SDK_UPSTREAM
+    || current.env.DATABRICKS_SDK_UPSTREAM_VERSION !== desired.DATABRICKS_SDK_UPSTREAM_VERSION;
+  if (!needsMigrate) return;
+  stdio[idx] = { ...current, env: desired };
+  cfg.stdio = stdio;
+  fs.writeFileSync(MCP_SERVERS_FILE, JSON.stringify(cfg, null, 2));
+  console.log("[DEVKIT] Migrated ai-dev-kit MCP entry env to upstream tracking");
 }
 
 function unregisterDevkitMcp() {
@@ -714,7 +759,7 @@ ipcMain.handle("install-devkit", async (event, { profile } = {}) => {
 
     // 3. Register the MCP entry with Mason.
     send("register", "Registering MCP server with Mason…");
-    const entry = registerDevkitMcp(profile || "DEFAULT");
+    const entry = registerDevkitMcp();
     send("done", "Installed");
     return { installed: true, version: readDevkitVersion(), entry };
   } catch (err) {
@@ -1666,6 +1711,9 @@ app.whenReady().then(() => {
     const icon = nativeImage.createFromPath(path.join(__dirname, "build", "icon.icns"));
     if (!icon.isEmpty()) app.dock.setIcon(icon);
   }
+  // One-time normalization for the ai-dev-kit MCP entry so attribution flows
+  // through to warehouse query history without a manual reinstall.
+  try { migrateDevkitMcpEntry(); } catch (e) { console.error("[DEVKIT] migrate failed:", e.message); }
   createWindow();
 });
 

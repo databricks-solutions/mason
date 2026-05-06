@@ -197,12 +197,18 @@ register_devkit_with_mason() {
   mkdir -p "$MASON_CONFIG_DIR"
   local venv_python="$DEVKIT_DIR/.venv/bin/python"
   local mcp_entry="$DEVKIT_DIR/repo/databricks-mcp-server/run_server.py"
-  local profile="${DEVKIT_PROFILE:-DEFAULT}"
+  # Pull Mason's version from the just-installed app bundle (CFBundleShortVersionString).
+  # Sets DATABRICKS_SDK_UPSTREAM_VERSION so warehouse query history can attribute
+  # MCP calls back to the right Mason release.
+  local mason_version="unknown"
+  if [[ -f "$DEST_APP/Contents/Info.plist" ]]; then
+    mason_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$DEST_APP/Contents/Info.plist" 2>/dev/null || echo unknown)"
+  fi
 
   if command -v node >/dev/null 2>&1; then
-    node - "$MCP_SERVERS_FILE" "$venv_python" "$mcp_entry" "$profile" <<'NODEEOF' || warn "Could not register MCP entry with Mason."
+    node - "$MCP_SERVERS_FILE" "$venv_python" "$mcp_entry" "$mason_version" <<'NODEEOF' || warn "Could not register MCP entry with Mason."
 const fs = require("fs");
-const [, , file, command, mcpEntry, profile] = process.argv;
+const [, , file, command, mcpEntry, masonVersion] = process.argv;
 let cfg = { http: [], stdio: [] };
 if (fs.existsSync(file)) {
   try {
@@ -216,13 +222,20 @@ cfg.stdio = [...others, {
   name: "ai-dev-kit",
   command,
   args: [mcpEntry],
-  env: { DATABRICKS_CONFIG_PROFILE: profile },
+  // No DATABRICKS_CONFIG_PROFILE — let the SDK use its default resolution
+  // (~/.databrickscfg [DEFAULT], DATABRICKS_HOST/TOKEN env, etc.). Setting
+  // DATABRICKS_SDK_UPSTREAM[_VERSION] adds Mason attribution to the SDK's
+  // User-Agent so warehouse query history can trace calls back to us.
+  env: {
+    DATABRICKS_SDK_UPSTREAM: "mason",
+    DATABRICKS_SDK_UPSTREAM_VERSION: masonVersion,
+  },
   enabledByDefault: true,
 }];
 fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
 console.log("Registered ai-dev-kit MCP with Mason at " + file);
 NODEEOF
-    ok "AI Dev Kit MCP registered with Mason"
+    ok "AI Dev Kit MCP registered with Mason (upstream=mason/${mason_version})"
   else
     warn "node not found — couldn't auto-register MCP. Add it manually in Settings → MCP."
   fi
