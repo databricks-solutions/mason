@@ -843,6 +843,20 @@ async function initApp() {
   initEventListeners();
   initDashboardListener();
 
+  // Render the sidebar version label as early as possible — before profile/MCP
+  // boot so it shows even if those hang or fail.
+  try {
+    const v = await window.api.getAppVersion();
+    console.log(`[VERSION] getAppVersion returned: ${JSON.stringify(v)}`);
+    if (v && el.sidebarVersion) el.sidebarVersion.textContent = `v${v}`;
+  } catch (e) {
+    console.error("[VERSION] getAppVersion failed:", e.message);
+  }
+  // Update check is online-only and never blocks the UI.
+  if (navigator.onLine) {
+    checkForUpdates().catch((e) => console.error("[UPDATE]", e.message));
+  }
+
   await loadProfiles();
 
   // First-launch path: no profiles in ~/.databrickscfg → walk through the
@@ -865,20 +879,6 @@ async function initApp() {
       await saveCurrentChat();
     }
   }, 10000);
-
-  // Show current version in the sidebar + check GitHub for a newer release.
-  // Best-effort; never blocks chat. Suppressed for offline launches and for
-  // versions the user explicitly skipped.
-  try {
-    const v = await window.api.getAppVersion();
-    console.log(`[VERSION] getAppVersion returned: ${JSON.stringify(v)}`);
-    if (v && el.sidebarVersion) el.sidebarVersion.textContent = `v${v}`;
-  } catch (e) {
-    console.error("[VERSION] getAppVersion failed:", e.message);
-  }
-  if (navigator.onLine) {
-    checkForUpdates().catch((e) => console.error("[UPDATE]", e.message));
-  }
 }
 
 async function checkForUpdates() {
