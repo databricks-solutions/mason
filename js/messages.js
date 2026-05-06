@@ -58,6 +58,7 @@ function renderMessages() {
     return;
   }
   for (const m of mason.history) {
+    if (m.role === "system") continue; // global/per-chat system prompts aren't shown
     if (m.role === "tool") {
       addMessageEl("tool-call", `Tool result (${m.name}): ${typeof m.content === "string" ? m.content : JSON.stringify(m.content)}`);
     } else {

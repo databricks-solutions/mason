@@ -15,6 +15,9 @@ function initDomRefs() {
     darkModeToggle: document.getElementById("darkModeToggle"),
     darkModeTrack: document.getElementById("darkModeTrack"),
     darkModeThumb: document.getElementById("darkModeThumb"),
+    systemPromptInput: document.getElementById("systemPromptInput"),
+    systemPromptStatus: document.getElementById("systemPromptStatus"),
+    systemPromptCount: document.getElementById("systemPromptCount"),
     historyList: document.getElementById("historyList"),
     plusBtn: document.getElementById("plusBtn"),
     popupMenu: document.getElementById("popupMenu"),
@@ -350,6 +353,30 @@ function initEventListeners() {
     const isDark = el.darkModeToggle.checked;
     applyDarkMode(isDark);
     localStorage.setItem("mason-dark-mode", isDark ? "1" : "0");
+  });
+
+  // Global system prompt — applies to every conversation across profiles.
+  // Stored in localStorage; chat.js prepends it as a system message at request
+  // time so it's never persisted into mason.history (and never displayed).
+  const SYSTEM_PROMPT_KEY = "mason-system-prompt";
+  function updateSystemPromptCount() {
+    const len = el.systemPromptInput.value.length;
+    el.systemPromptCount.textContent = `${len} / 3000`;
+  }
+  el.systemPromptInput.value = localStorage.getItem(SYSTEM_PROMPT_KEY) || "";
+  updateSystemPromptCount();
+  let systemPromptSaveTimer = null;
+  el.systemPromptInput.addEventListener("input", () => {
+    updateSystemPromptCount();
+    el.systemPromptStatus.textContent = "Saving…";
+    clearTimeout(systemPromptSaveTimer);
+    systemPromptSaveTimer = setTimeout(() => {
+      const value = el.systemPromptInput.value.trim();
+      if (value) localStorage.setItem(SYSTEM_PROMPT_KEY, value);
+      else localStorage.removeItem(SYSTEM_PROMPT_KEY);
+      el.systemPromptStatus.textContent = value ? "Saved" : "Cleared";
+      setTimeout(() => { el.systemPromptStatus.textContent = ""; }, 1500);
+    }, 400);
   });
 
   // Dashboard nav tabs
