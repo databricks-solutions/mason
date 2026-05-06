@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("api", {
   mcpStdioConnect: (params) => ipcRenderer.invoke("mcp-stdio-connect", params),
   mcpStdioCallTool: (params) => ipcRenderer.invoke("mcp-stdio-call-tool", params),
   mcpStdioDisconnect: (params) => ipcRenderer.invoke("mcp-stdio-disconnect", params),
+  mcpStdioRebindProfile: (params) => ipcRenderer.invoke("mcp-stdio-rebind-profile", params),
   mcpConfigLoad: (profile) => ipcRenderer.invoke("mcp-config-load", profile),
   mcpGlobalConfigLoad: () => ipcRenderer.invoke("mcp-global-config-load"),
   mcpGlobalConfigSave: (data) => ipcRenderer.invoke("mcp-global-config-save", data),

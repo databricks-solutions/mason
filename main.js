@@ -987,6 +987,45 @@ ipcMain.handle("mcp-stdio-disconnect", (_event, { key }) => {
   delete stdioProcesses[key];
 });
 
+// Rebind any profile-bound stdio MCP entries to a new Databricks profile when
+// the user switches workspaces in Mason. For each entry whose env has
+// DATABRICKS_CONFIG_PROFILE set, we (1) rewrite the saved env so it points at
+// the new profile and (2) kill the running subprocess. The renderer's
+// autoConnectMcp loop then respawns it with the new env so the SDK inside
+// re-auths against the right workspace.
+ipcMain.handle("mcp-stdio-rebind-profile", (_event, { profile }) => {
+  if (!profile || !fs.existsSync(MCP_SERVERS_FILE)) return { rebound: [] };
+  let cfg;
+  try {
+    cfg = JSON.parse(fs.readFileSync(MCP_SERVERS_FILE, "utf-8"));
+  } catch (_) { return { rebound: [] }; }
+  if (Array.isArray(cfg)) return { rebound: [] };
+  const stdio = cfg.stdio || [];
+  const rebound = [];
+  let changed = false;
+  for (const entry of stdio) {
+    if (!entry.env || entry.env.DATABRICKS_CONFIG_PROFILE === undefined) continue;
+    const wasDifferent = entry.env.DATABRICKS_CONFIG_PROFILE !== profile;
+    if (wasDifferent) {
+      entry.env = { ...entry.env, DATABRICKS_CONFIG_PROFILE: profile };
+      changed = true;
+    }
+    rebound.push(entry.name);
+    // Always kill the running process — even if the saved env was already
+    // correct, the spawned subprocess inherited whatever env existed when it
+    // started. Renderer respawns it via autoConnectMcp.
+    const key = `stdio:${entry.command}:${(entry.args || []).join(":")}`;
+    const state = stdioProcesses[key];
+    if (state?.process && !state.process.killed) {
+      try { state.process.kill("SIGTERM"); } catch (_) {}
+      console.log(`[MCP-STDIO] Killed for profile rebind: ${entry.name} -> ${profile}`);
+    }
+    delete stdioProcesses[key];
+  }
+  if (changed) fs.writeFileSync(MCP_SERVERS_FILE, JSON.stringify(cfg, null, 2));
+  return { rebound, changed };
+});
+
 // --- MCP Client (Streamable HTTP transport) ---
 
 const mcpSessions = {}; // serverUrl -> { sessionId, tools }

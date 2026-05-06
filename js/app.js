@@ -719,7 +719,27 @@ function initEventListeners() {
       addMessageEl("error", `Profile "${profileName}" auth failed: ${e.message}. Click Authenticate in the + menu.`);
     }
 
-    mason.mcpServers = mason.mcpServers.filter((s) => s.type === "stdio");
+    // Rebind any profile-bound stdio MCPs (those with DATABRICKS_CONFIG_PROFILE
+    // set in their saved env — currently the ai-dev-kit MCP). main.js rewrites
+    // the saved env and kills the running subprocesses; we drop the matching
+    // entries from runtime so autoConnectMcp respawns them with the new env.
+    let reboundNames = [];
+    try {
+      const result = await window.api.mcpStdioRebindProfile({ profile: profileName });
+      reboundNames = result.rebound || [];
+      if (reboundNames.length > 0) {
+        console.log(`[WORKSPACE] Rebinding stdio MCPs to "${profileName}":`, reboundNames.join(", "));
+      }
+    } catch (e) {
+      console.error("[WORKSPACE] Stdio rebind failed:", e.message);
+    }
+
+    // Keep stdio servers that aren't profile-bound; drop HTTP (always reload)
+    // and any rebound stdio (its subprocess was just killed — let
+    // autoConnectMcp spawn a fresh one with the new env).
+    mason.mcpServers = mason.mcpServers.filter((s) =>
+      s.type === "stdio" && !reboundNames.includes(s.configName)
+    );
     clearUcMcpCache();
     renderMcpBadges();
     await loadWorkspaceConfig();
