@@ -97,16 +97,25 @@ SRC_APP="$MOUNT_POINT/$APP_NAME.app"
 [[ -d "$SRC_APP" ]] || err "Expected $APP_NAME.app inside the DMG, didn't find it."
 
 DEST_APP="$INSTALL_DIR/$APP_NAME.app"
-if [[ -d "$DEST_APP" ]]; then
-  log "Removing existing $DEST_APP..."
-  rm -rf "$DEST_APP" 2>/dev/null || sudo rm -rf "$DEST_APP"
+STAGING_APP="$INSTALL_DIR/.${APP_NAME}.app.new"
+
+# Atomic install: copy to a staging path first, then mv over the existing
+# bundle. Without this, there's a 30–60s window between rm and cp where the
+# bundle is missing, and clicking the dock icon during that window causes
+# Launch Services to fall back to any other registered Mason.app (e.g. a dev
+# checkout's node_modules/electron/dist/Mason.app).
+log "Staging $APP_NAME.app at $STAGING_APP..."
+rm -rf "$STAGING_APP" 2>/dev/null || sudo rm -rf "$STAGING_APP"
+if ! cp -R "$SRC_APP" "$STAGING_APP" 2>/dev/null; then
+  log "Permission denied — retrying with sudo (you may be prompted for your password)."
+  sudo cp -R "$SRC_APP" "$STAGING_APP"
 fi
 
-log "Copying $APP_NAME.app to $INSTALL_DIR..."
-if ! cp -R "$SRC_APP" "$INSTALL_DIR/" 2>/dev/null; then
-  log "Permission denied — retrying with sudo (you may be prompted for your password)."
-  sudo cp -R "$SRC_APP" "$INSTALL_DIR/"
+log "Swapping into place at $DEST_APP..."
+if [[ -d "$DEST_APP" ]]; then
+  rm -rf "$DEST_APP" 2>/dev/null || sudo rm -rf "$DEST_APP"
 fi
+mv "$STAGING_APP" "$DEST_APP" 2>/dev/null || sudo mv "$STAGING_APP" "$DEST_APP"
 
 # Strip Gatekeeper quarantine xattr from the freshly-installed copy. Optional —
 # the app is signed and notarized, but quarantine adds a "downloaded from

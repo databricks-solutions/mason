@@ -402,7 +402,7 @@ ipcMain.handle("apply-update", () => {
     `echo "[mason-update] starting at $(date)" >> "${logFile}"`,
     `if curl -fsSL ${installUrl} | bash >> "${logFile}" 2>&1; then`,
     `  echo "[mason-update] install ok, relaunching" >> "${logFile}"`,
-    `  open -a Mason`,
+    `  open /Applications/Mason.app`,
     `else`,
     `  echo "[mason-update] install FAILED" >> "${logFile}"`,
     `  osascript -e 'display dialog "Mason update failed. See ${logFile.replace(/"/g, '\\"')} for details." buttons {"OK"} default button 1 with icon caution with title "Mason update"' || true`,
