@@ -24,6 +24,19 @@
       body.dark .sidebar { background: #141414; border-color: #2a2a2a; }
       .sidebar.hidden { margin-left: -260px; }
 
+      .sidebar-drag-region { display: none; }
+      html.platform-mac .sidebar-drag-region {
+        display: block;
+        height: 38px;
+        -webkit-app-region: drag;
+        flex-shrink: 0;
+      }
+      html.platform-mac .sidebar { padding-top: 0; }
+      html.platform-mac .sidebar.hidden ~ .content .topbar { padding-left: 88px; }
+
+      /* Windows: native overlay buttons render top-right (~140px wide) — keep our X button clear of them. */
+      html.platform-win .topbar { padding-right: 148px; }
+
       .sidebar-header {
         display: flex;
         align-items: center;
@@ -272,7 +285,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 10px 20px;
+        padding: 6px 20px;
         -webkit-app-region: drag;
         flex-shrink: 0;
       }

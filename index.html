@@ -10,10 +10,16 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
     <link rel="stylesheet" href="css/app.css" />
+    <script>
+      var _p = navigator.platform || "";
+      document.documentElement.classList.toggle("platform-mac", _p.startsWith("Mac"));
+      document.documentElement.classList.toggle("platform-win", _p.startsWith("Win"));
+    </script>
   </head>
   <body>
     <!-- Sidebar -->
     <div class="sidebar" id="sidebar">
+      <div class="sidebar-drag-region"></div>
       <div class="sidebar-nav">
         <button class="sidebar-nav-btn active" id="navChats">Chats</button>
         <button class="sidebar-nav-btn" id="navDashboards">Dashboards</button>
