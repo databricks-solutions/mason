@@ -764,11 +764,21 @@ function initEventListeners() {
     // Clear token cache for old profile
     try { await window.api.clearTokenCache(); } catch (_) {}
 
-    // Validate auth
+    // Validate auth — if the cached token is missing/expired, auto-launch
+    // the OAuth browser flow so the user doesn't have to click Authenticate
+    // manually after every profile switch.
     try {
       await getAuthToken();
-    } catch (e) {
-      addMessageEl("error", `Profile "${profileName}" auth failed: ${e.message}. Click Authenticate in the + menu.`);
+    } catch (_) {
+      addMessageEl("tool-call", `Profile "${profileName}" needs authentication — opening browser…`);
+      try {
+        const result = await window.api.oauthLogin(profileName);
+        if (!result?.success) {
+          addMessageEl("error", `OAuth login failed for "${profileName}". Click Authenticate in the + menu to retry.`);
+        }
+      } catch (e) {
+        addMessageEl("error", `OAuth login failed for "${profileName}": ${e.message}. Click Authenticate in the + menu to retry.`);
+      }
     }
 
     // Rebind any profile-bound stdio MCPs (those with DATABRICKS_CONFIG_PROFILE
