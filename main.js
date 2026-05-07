@@ -326,6 +326,17 @@ function compareSemver(a, b) {
 
 ipcMain.handle("get-app-version", () => app.getVersion());
 
+ipcMain.handle("set-titlebar-overlay", (event, isDark) => {
+  if (process.platform !== "win32") return;
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return;
+  win.setTitleBarOverlay({
+    color: isDark ? "#141414" : "#f0f0f0",
+    symbolColor: isDark ? "#e0e0e0" : "#333",
+    height: 38,
+  });
+});
+
 ipcMain.handle("check-update", async () => {
   const current = app.getVersion();
   try {
@@ -1840,6 +1851,9 @@ function createWindow() {
     height: windowState?.height || 720,
     show: false,
     icon: path.join(__dirname, "build", "icon.icns"),
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : (process.platform === "win32" ? "hidden" : "default"),
+    trafficLightPosition: process.platform === "darwin" ? { x: 14, y: 14 } : undefined,
+    titleBarOverlay: process.platform === "win32" ? { color: "#f0f0f0", symbolColor: "#333", height: 38 } : undefined,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       webviewTag: true,

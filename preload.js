@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("api", {
   listUcConnections: (params) => ipcRenderer.invoke("list-uc-connections", params),
   openAuthWindow: (params) => ipcRenderer.invoke("open-auth-window", params),
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
+  setTitleBarOverlay: (isDark) => ipcRenderer.invoke("set-titlebar-overlay", isDark),
   checkUpdate: () => ipcRenderer.invoke("check-update"),
   openReleasePage: (url) => ipcRenderer.invoke("open-release-page", url),
   applyUpdate: () => ipcRenderer.invoke("apply-update"),

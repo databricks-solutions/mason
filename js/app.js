@@ -380,6 +380,7 @@ function initEventListeners() {
     document.getElementById("hljs-dark").disabled = !isDark;
     el.darkModeTrack.style.background = isDark ? "#4caf50" : "#ccc";
     el.darkModeThumb.style.transform = isDark ? "translateX(20px)" : "translateX(0)";
+    if (window.api?.setTitleBarOverlay) window.api.setTitleBarOverlay(isDark);
   }
   el.darkModeToggle.addEventListener("change", async () => {
     const isDark = el.darkModeToggle.checked;
