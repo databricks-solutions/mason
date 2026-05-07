@@ -1855,7 +1855,7 @@ function createWindow() {
     trafficLightPosition: process.platform === "darwin" ? { x: 14, y: 14 } : undefined,
     titleBarOverlay: process.platform === "win32" ? { color: "#f0f0f0", symbolColor: "#333", height: 38 } : undefined,
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: path.join(__dirname, "build", "ts", "preload.js"),
       webviewTag: true,
       nodeIntegration: false,
       contextIsolation: true,

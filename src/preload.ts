@@ -1,59 +1,81 @@
-const { contextBridge, ipcRenderer } = require("electron");
+import { contextBridge, ipcRenderer } from "electron";
+import type { MasonApi } from "./shared/api";
 
-contextBridge.exposeInMainWorld("api", {
-  onChatChunk: (callback) => ipcRenderer.on("chat-chunk", (_event, chunk) => callback(chunk)),
+const api: MasonApi = {
+  onChatChunk: (callback) =>
+    ipcRenderer.on("chat-chunk", (_event, chunk) => callback(chunk)),
   removeChatChunkListeners: () => ipcRenderer.removeAllListeners("chat-chunk"),
+
   getProfiles: () => ipcRenderer.invoke("get-profiles"),
   getOAuthToken: (profile) => ipcRenderer.invoke("get-oauth-token", profile),
   clearTokenCache: (profile) => ipcRenderer.invoke("clear-token-cache", profile),
   getToken: (profile) => ipcRenderer.invoke("get-token", profile),
   oauthLogin: (profile) => ipcRenderer.invoke("oauth-login", profile),
+
   chat: (params) => ipcRenderer.invoke("chat", params),
   abortChat: () => ipcRenderer.invoke("abort-chat"),
+
   historyList: () => ipcRenderer.invoke("history-list"),
   historyLoad: (id) => ipcRenderer.invoke("history-load", id),
   historySave: (data) => ipcRenderer.invoke("history-save", data),
   historyDelete: (id) => ipcRenderer.invoke("history-delete", id),
+
   builtinToolCall: (params) => ipcRenderer.invoke("builtin-tool-call", params),
+
   mcpConnect: (params) => ipcRenderer.invoke("mcp-connect", params),
   mcpListTools: (params) => ipcRenderer.invoke("mcp-list-tools", params),
   mcpCallTool: (params) => ipcRenderer.invoke("mcp-call-tool", params),
+
   mcpReadConfig: (params) => ipcRenderer.invoke("mcp-read-config", params),
   mcpStdioConnect: (params) => ipcRenderer.invoke("mcp-stdio-connect", params),
   mcpStdioCallTool: (params) => ipcRenderer.invoke("mcp-stdio-call-tool", params),
   mcpStdioDisconnect: (params) => ipcRenderer.invoke("mcp-stdio-disconnect", params),
   mcpStdioRebindProfile: (params) => ipcRenderer.invoke("mcp-stdio-rebind-profile", params),
+
   mcpConfigLoad: (profile) => ipcRenderer.invoke("mcp-config-load", profile),
   mcpGlobalConfigLoad: () => ipcRenderer.invoke("mcp-global-config-load"),
   mcpGlobalConfigSave: (data) => ipcRenderer.invoke("mcp-global-config-save", data),
   mcpConfigSave: (data) => ipcRenderer.invoke("mcp-config-save", data),
+
   endpointsLoad: (profile) => ipcRenderer.invoke("endpoints-load", profile),
   endpointsSave: (data) => ipcRenderer.invoke("endpoints-save", data),
   workspaceLoad: (profile) => ipcRenderer.invoke("workspace-load", profile),
   workspaceSave: (data) => ipcRenderer.invoke("workspace-save", data),
+
   discoverModels: (params) => ipcRenderer.invoke("discover-models", params),
-  showOpenDialog: (options) => ipcRenderer.invoke("show-open-dialog", options),
-  readFileForUpload: (params) => ipcRenderer.invoke("read-file-for-upload", params),
   listDashboards: (params) => ipcRenderer.invoke("list-dashboards", params),
-  onDashboardsUpdated: (callback) => ipcRenderer.on("dashboards-updated", (_event, dashboards) => callback(dashboards)),
+  onDashboardsUpdated: (callback) =>
+    ipcRenderer.on("dashboards-updated", (_event, dashboards) => callback(dashboards)),
   listUcConnections: (params) => ipcRenderer.invoke("list-uc-connections", params),
   openAuthWindow: (params) => ipcRenderer.invoke("open-auth-window", params),
+
+  showOpenDialog: (options) => ipcRenderer.invoke("show-open-dialog", options),
+  readFileForUpload: (params) => ipcRenderer.invoke("read-file-for-upload", params),
+
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   setTitleBarOverlay: (isDark) => ipcRenderer.invoke("set-titlebar-overlay", isDark),
   checkUpdate: () => ipcRenderer.invoke("check-update"),
   openReleasePage: (url) => ipcRenderer.invoke("open-release-page", url),
   applyUpdate: () => ipcRenderer.invoke("apply-update"),
+
   detectCli: () => ipcRenderer.invoke("detect-cli"),
   installCli: () => ipcRenderer.invoke("install-cli"),
-  onCliInstallProgress: (callback) => ipcRenderer.on("cli-install-progress", (_event, payload) => callback(payload)),
+  onCliInstallProgress: (callback) =>
+    ipcRenderer.on("cli-install-progress", (_event, payload) => callback(payload)),
   removeCliInstallListeners: () => ipcRenderer.removeAllListeners("cli-install-progress"),
+
   addProfile: (params) => ipcRenderer.invoke("add-profile", params),
   removeProfile: (name) => ipcRenderer.invoke("remove-profile", name),
+
   settingsLoad: () => ipcRenderer.invoke("settings-load"),
   settingsSave: (partial) => ipcRenderer.invoke("settings-save", partial),
+
   detectDevkit: () => ipcRenderer.invoke("detect-devkit"),
   installDevkit: (params) => ipcRenderer.invoke("install-devkit", params),
   uninstallDevkit: () => ipcRenderer.invoke("uninstall-devkit"),
-  onDevkitInstallProgress: (callback) => ipcRenderer.on("devkit-install-progress", (_event, payload) => callback(payload)),
+  onDevkitInstallProgress: (callback) =>
+    ipcRenderer.on("devkit-install-progress", (_event, payload) => callback(payload)),
   removeDevkitInstallListeners: () => ipcRenderer.removeAllListeners("devkit-install-progress"),
-});
+};
+
+contextBridge.exposeInMainWorld("api", api);
