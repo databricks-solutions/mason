@@ -74,6 +74,8 @@ declare global {
     dashboardsList: unknown[];
     autoConnectDone: boolean;
 
+    defaultModel?: { value: string; label: string } | null;
+
     el: Record<string, HTMLElement | null>;
   }
 
