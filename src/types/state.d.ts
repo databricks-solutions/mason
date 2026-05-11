@@ -11,6 +11,18 @@ interface MasonModelDescriptor {
   apiTypes?: string[];
 }
 
+interface MasonModelGroup {
+  group: string;
+  models: MasonModelDescriptor[];
+}
+
+interface MasonCustomEndpoint {
+  name: string;
+  modelId: string;
+  gatewayUrl?: string | null;
+  format?: "chat" | "responses";
+}
+
 interface MasonAttachedFile {
   name: string;
   ext?: string;
@@ -46,10 +58,10 @@ interface MasonState {
   mcpServers: MasonMcpServer[];
   disabledTools: Set<string>;
 
-  discoveredModels: MasonModelDescriptor[];
+  discoveredModels: MasonModelGroup[];
   selectedModelValue: string;
   selectedModelLabel: string;
-  customEndpoints: unknown[];
+  customEndpoints: MasonCustomEndpoint[];
 
   autoLoadTools: boolean;
 
