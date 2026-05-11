@@ -3,22 +3,25 @@
   "version": "1.3.9",
   "description": "Desktop chat app for Databricks AI Gateway with MCP tool calling",
   "author": "Databricks",
-  "main": "main.js",
+  "main": "build/ts/main.js",
   "scripts": {
-    "start": "electron .",
+    "start": "npm run build:ts && electron .",
     "icon": "node scripts/build-icon.js",
     "postinstall": "node scripts/build-icon.js && node scripts/patch-icon.js",
-    "build": "electron-builder",
-    "build:mac": "electron-builder --mac",
-    "build:win": "electron-builder --win",
-    "build:linux": "electron-builder --linux",
-    "dist": "electron-builder --publish never"
+    "build:ts": "tsc",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run build:ts && electron-builder",
+    "build:mac": "npm run build:ts && electron-builder --mac",
+    "build:win": "npm run build:ts && electron-builder --win",
+    "build:linux": "npm run build:ts && electron-builder --linux",
+    "dist": "npm run build:ts && electron-builder --publish never"
   },
   "devDependencies": {
     "electron": "33.4.11",
     "electron-builder": "25.1.8",
     "electron-reloader": "1.2.3",
-    "sharp": "0.34.5"
+    "sharp": "0.34.5",
+    "typescript": "5.9.3"
   },
   "dependencies": {
     "electron-window-state": "5.0.3",
@@ -32,10 +35,8 @@
       "output": "dist"
     },
     "files": [
-      "main.js",
-      "preload.js",
+      "build/ts/**/*",
       "index.html",
-      "js/**/*",
       "css/**/*",
       "icons/**/*",
       "build/icon.icns",
