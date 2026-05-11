@@ -32,14 +32,21 @@ declare global {
     content?: string;
   }
 
+  interface MasonMcpStdioConfig {
+    command: string;
+    args?: string[];
+    env?: Record<string, string>;
+  }
+
   interface MasonMcpServer {
     type: "http" | "stdio";
     url?: string;
     key?: string;
+    displayName?: string | null;
     configName?: string;
-    config?: unknown;
-    serverInfo?: unknown;
-    tools?: unknown[];
+    config?: MasonMcpStdioConfig;
+    serverInfo?: { name?: string };
+    tools?: Array<{ name: string; description?: string; inputSchema?: unknown }>;
   }
 
   interface MasonDashboard {
