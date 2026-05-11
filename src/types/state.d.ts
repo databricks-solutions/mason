@@ -42,6 +42,11 @@ declare global {
     tools?: unknown[];
   }
 
+  interface MasonDashboard {
+    id: string;
+    name: string;
+  }
+
   interface MasonSettings {
     darkMode: boolean;
     systemPrompt: string;
@@ -70,8 +75,9 @@ declare global {
     settings: MasonSettings;
     systemPrompt: string;
 
-    currentView: "chat" | "dashboards" | "dashboard-detail";
-    dashboardsList: unknown[];
+    currentView: "chat" | "dashboards" | "dashboard-detail" | "settings" | "onboarding";
+    dashboardsList: MasonDashboard[];
+    dashboardsLoading?: boolean;
     autoConnectDone: boolean;
 
     defaultModel?: { value: string; label: string } | null;
