@@ -1,10 +1,13 @@
-const { app, BrowserWindow, ipcMain, nativeImage, dialog, shell } = require("electron");
-const { execSync, spawn } = require("child_process");
-const path = require("path");
-const fs = require("fs");
-const os = require("os");
+import { app, BrowserWindow, ipcMain, nativeImage, dialog, shell, IpcMainInvokeEvent } from "electron";
+import { execSync, spawn, ChildProcess } from "child_process";
+import * as path from "path";
+import * as fs from "fs";
+import * as os from "os";
 
 try {
+  // electron-reloader watches main.js paths; in dev mode it picks up our
+  // compiled file under build/ts/. It's fine if this throws in production.
+  // @ts-ignore — no types shipped.
   require("electron-reloader")(module, {
     watchRenderer: true,
     ignore: ["chat_history"],
@@ -20,8 +23,6 @@ const MCP_SERVERS_FILE = path.join(CONFIG_DIR, "mcp_servers.json");
 const CLI_PATH_FILE = path.join(CONFIG_DIR, "cli_path.json");
 const SETTINGS_FILE = path.join(CONFIG_DIR, "settings.json");
 const DATABRICKSCFG_PATH = path.join(os.homedir(), ".databrickscfg");
-// ai-dev-kit (https://github.com/databricks-solutions/ai-dev-kit) installs to a
-// fixed location managed by its upstream installer. We just consume what's there.
 const DEVKIT_DIR = path.join(os.homedir(), ".ai-dev-kit");
 const DEVKIT_REPO_DIR = path.join(DEVKIT_DIR, "repo");
 const DEVKIT_VENV_PYTHON = path.join(DEVKIT_DIR, ".venv", "bin", "python");
@@ -33,11 +34,9 @@ const MASON_REPO = "databricks-solutions/mason";
 const MASON_RELEASES_URL = `https://github.com/${MASON_REPO}/releases/latest`;
 const MCP_NAME_DEVKIT = "ai-dev-kit";
 
-// Resolve full shell PATH for packaged app (macOS GUI apps don't inherit shell PATH)
-function getShellEnv() {
+function getShellEnv(): NodeJS.ProcessEnv {
   const userShell = process.env.SHELL || "/bin/zsh";
   try {
-    // Use login shell (-l) to source .zshrc/.zprofile/.bash_profile
     const shellPath = execSync(`${userShell} -l -c 'echo $PATH'`, {
       encoding: "utf-8",
       timeout: 5000,
@@ -46,58 +45,52 @@ function getShellEnv() {
     console.log(`[AUTH] Resolved shell PATH: ${shellPath.slice(0, 100)}...`);
     return { ...process.env, PATH: shellPath };
   } catch (err) {
-    console.error(`[AUTH] Failed to resolve shell PATH: ${err.message}`);
-    // Fallback: add common CLI locations
-    const extra = ["/usr/local/bin", "/opt/homebrew/bin", "/opt/homebrew/sbin",
-      path.join(os.homedir(), ".local/bin"), path.join(os.homedir(), "bin")].join(":");
+    console.error(`[AUTH] Failed to resolve shell PATH: ${(err as Error).message}`);
+    const extra = [
+      "/usr/local/bin",
+      "/opt/homebrew/bin",
+      "/opt/homebrew/sbin",
+      path.join(os.homedir(), ".local/bin"),
+      path.join(os.homedir(), "bin"),
+    ].join(":");
     return { ...process.env, PATH: `${process.env.PATH}:${extra}` };
   }
 }
 const shellEnv = getShellEnv();
 
-// Ensure ~/.mason directories exist on startup. Config files are created
-// lazily on first save by saveWorkspaces / saveMcpServers / etc.
 if (!fs.existsSync(MASON_HOME)) fs.mkdirSync(MASON_HOME);
 if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR);
 if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR);
 if (!fs.existsSync(BIN_DIR)) fs.mkdirSync(BIN_DIR);
 
 // --- Databricks CLI resolution + install ---
-//
-// Single resolver used everywhere we shell out to `databricks`. Order:
-//   1. Mason-managed binary at ~/.mason/bin/databricks (path saved in
-//      ~/.mason/config/cli_path.json after install).
-//   2. System CLI on the user's resolved shell PATH.
-//   3. null (caller decides whether to prompt for install).
 
-function managedCliPath() {
+function managedCliPath(): string {
   return path.join(BIN_DIR, process.platform === "win32" ? "databricks.exe" : "databricks");
 }
 
-function databricksCliPath() {
-  // Prefer system CLI if it's on PATH — users with brew/winget installs already
-  // get auto-updates from those package managers.
+function databricksCliPath(): string | null {
   const which = process.platform === "win32" ? "where" : "command -v";
   try {
-    const out = execSync(`${which} databricks`, { encoding: "utf-8", env: shellEnv, timeout: 3000 }).trim().split("\n")[0];
+    const out = execSync(`${which} databricks`, { encoding: "utf-8", env: shellEnv, timeout: 3000 })
+      .trim()
+      .split("\n")[0];
     if (out && fs.existsSync(out)) return out;
-  } catch (_) { /* not on PATH */ }
+  } catch (_) {}
 
-  // Fall back to a Mason-managed binary if we previously installed one.
   const managed = managedCliPath();
   if (fs.existsSync(managed)) return managed;
 
-  // Last resort: check the saved path file (in case user moved the binary).
   if (fs.existsSync(CLI_PATH_FILE)) {
     try {
       const { path: saved } = JSON.parse(fs.readFileSync(CLI_PATH_FILE, "utf-8"));
-      if (saved && fs.existsSync(saved)) return saved;
-    } catch (_) { /* fall through */ }
+      if (saved && fs.existsSync(saved)) return saved as string;
+    } catch (_) {}
   }
   return null;
 }
 
-function getCliVersion(cliPath) {
+function getCliVersion(cliPath: string): string | null {
   try {
     const out = execSync(`"${cliPath}" --version`, { encoding: "utf-8", timeout: 3000 }).trim();
     return out;
@@ -106,26 +99,32 @@ function getCliVersion(cliPath) {
   }
 }
 
-// Fetch with timeout
-let activeChatController = null;
+let activeChatController: AbortController | null = null;
 
-function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = 30000
+): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
-function chatFetch(url, options = {}, timeoutMs = 120000) {
+function chatFetch(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = 120000
+): Promise<Response> {
   activeChatController = new AbortController();
-  const timer = setTimeout(() => activeChatController.abort(), timeoutMs);
+  const timer = setTimeout(() => activeChatController?.abort(), timeoutMs);
   return fetch(url, { ...options, signal: activeChatController.signal }).finally(() => {
     clearTimeout(timer);
     activeChatController = null;
   });
 }
 
-// Sanitize sensitive data from log output
-function sanitizeLog(str) {
+function sanitizeLog(str: string): string {
   return str
     .replace(/Bearer [^\s"]+/g, "Bearer ****")
     .replace(/"token"\s*:\s*"[^"]*"/g, '"token": "****"')
@@ -135,13 +134,19 @@ function sanitizeLog(str) {
 
 // --- Config parsing ---
 
-function parseDatabricksCfg() {
+interface ParsedProfile {
+  name: string;
+  host: string;
+  token: string;
+}
+
+function parseDatabricksCfg(): ParsedProfile[] {
   const cfgPath = path.join(os.homedir(), ".databrickscfg");
   if (!fs.existsSync(cfgPath)) return [];
 
   const text = fs.readFileSync(cfgPath, "utf-8");
-  const profiles = [];
-  let current = null;
+  const profiles: ParsedProfile[] = [];
+  let current: ParsedProfile | null = null;
 
   for (const line of text.split("\n")) {
     const sectionMatch = line.match(/^\[(.+)\]$/);
@@ -159,13 +164,12 @@ function parseDatabricksCfg() {
     }
   }
 
-  // Include profiles that have a host — token is optional (OAuth profiles use CLI auth)
   return profiles.filter((p) => p.host);
 }
 
-// --- Chat history (JSON file-based) ---
+// --- Chat history ---
 
-function ensureHistoryDir() {
+function ensureHistoryDir(): void {
   if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR);
 }
 
@@ -174,37 +178,41 @@ ipcMain.handle("get-profiles", () => parseDatabricksCfg());
 ipcMain.handle("history-list", () => {
   ensureHistoryDir();
   const files = fs.readdirSync(HISTORY_DIR).filter((f) => f.endsWith(".json"));
-  return files.map((f) => {
-    const data = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR, f), "utf-8"));
-    return { id: f.replace(".json", ""), title: data.title, updatedAt: data.updatedAt };
-  }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return files
+    .map((f) => {
+      const data = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR, f), "utf-8"));
+      return { id: f.replace(".json", ""), title: data.title, updatedAt: data.updatedAt };
+    })
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 });
 
-ipcMain.handle("history-load", (_event, id) => {
+ipcMain.handle("history-load", (_event: IpcMainInvokeEvent, id: string) => {
   const filePath = path.join(HISTORY_DIR, `${id}.json`);
   if (!fs.existsSync(filePath)) return null;
   return JSON.parse(fs.readFileSync(filePath, "utf-8"));
 });
 
-ipcMain.handle("history-save", (_event, { id, title, model, messages }) => {
+ipcMain.handle("history-save", (_event: IpcMainInvokeEvent, { id, title, model, messages }: any) => {
   ensureHistoryDir();
   const data = { title, model, messages, updatedAt: new Date().toISOString() };
   fs.writeFileSync(path.join(HISTORY_DIR, `${id}.json`), JSON.stringify(data, null, 2));
 });
 
-ipcMain.handle("history-delete", (_event, id) => {
+ipcMain.handle("history-delete", (_event: IpcMainInvokeEvent, id: string) => {
   const filePath = path.join(HISTORY_DIR, `${id}.json`);
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 });
 
-// --- OAuth token via Databricks CLI ---
+// --- OAuth via Databricks CLI ---
 
-// OAuth token cache: { profile: { token, expiresAt } }
-const tokenCache = {};
-const TOKEN_CACHE_TTL = 4 * 60 * 1000; // 4 min (tokens last ~5 min, refresh early)
+interface TokenCacheEntry {
+  token: string;
+  expiresAt: number;
+}
+const tokenCache: Record<string, TokenCacheEntry> = {};
+const TOKEN_CACHE_TTL = 4 * 60 * 1000;
 
-function getOAuthToken(profile) {
-  // Check cache first
+function getOAuthToken(profile: string): string | null {
   const cached = tokenCache[profile];
   if (cached && cached.expiresAt > Date.now()) {
     return cached.token;
@@ -223,23 +231,19 @@ function getOAuthToken(profile) {
     }).trim();
     const parsed = JSON.parse(result);
     console.log(`[AUTH] Got OAuth token for profile ${profile} (expires: ${parsed.expiry || "unknown"})`);
-
-    // Cache the token
     tokenCache[profile] = {
       token: parsed.access_token,
       expiresAt: Date.now() + TOKEN_CACHE_TTL,
     };
-
     return parsed.access_token;
   } catch (err) {
-    console.error(`[AUTH] OAuth failed for profile ${profile}:`, err.message);
-    // Clear stale cache entry
+    console.error(`[AUTH] OAuth failed for profile ${profile}:`, (err as Error).message);
     delete tokenCache[profile];
     return null;
   }
 }
 
-function clearTokenCache(profile) {
+function clearTokenCache(profile?: string): void {
   if (profile) {
     delete tokenCache[profile];
   } else {
@@ -247,12 +251,10 @@ function clearTokenCache(profile) {
   }
 }
 
-// Unified token getter: OAuth first, PAT fallback
-function getToken(profileName) {
+function getToken(profileName: string): string {
   const oauthToken = getOAuthToken(profileName);
   if (oauthToken) return oauthToken;
 
-  // Fallback to PAT from config
   const profiles = parseDatabricksCfg();
   const profile = profiles.find((p) => p.name === profileName);
   if (profile?.token) {
@@ -263,10 +265,13 @@ function getToken(profileName) {
   throw new Error(`No auth available for profile "${profileName}". Click Authenticate in the + menu.`);
 }
 
-function runOAuthLogin(profile) {
+function runOAuthLogin(profile: string): Promise<{ success: boolean; error?: string }> {
   const cli = databricksCliPath();
   if (!cli) {
-    return Promise.resolve({ success: false, error: "Databricks CLI is not installed. Install it from Settings or finish onboarding." });
+    return Promise.resolve({
+      success: false,
+      error: "Databricks CLI is not installed. Install it from Settings or finish onboarding.",
+    });
   }
   console.log(`[AUTH] Running ${cli} auth login --profile ${profile}...`);
   return new Promise((resolve) => {
@@ -276,7 +281,9 @@ function runOAuthLogin(profile) {
       env: shellEnv,
     });
     let stderr = "";
-    proc.stderr.on("data", (d) => { stderr += d.toString(); });
+    proc.stderr?.on("data", (d) => {
+      stderr += d.toString();
+    });
     proc.on("close", (code) => {
       if (code === 0) {
         console.log(`[AUTH] Login completed for profile ${profile}`);
@@ -293,30 +300,15 @@ function runOAuthLogin(profile) {
   });
 }
 
-ipcMain.handle("get-oauth-token", (_event, profile) => {
-  return getOAuthToken(profile);
-});
+ipcMain.handle("get-oauth-token", (_event: IpcMainInvokeEvent, profile: string) => getOAuthToken(profile));
+ipcMain.handle("clear-token-cache", (_event: IpcMainInvokeEvent, profile?: string) => clearTokenCache(profile));
+ipcMain.handle("get-token", (_event: IpcMainInvokeEvent, profile: string) => getToken(profile));
+ipcMain.handle("oauth-login", (_event: IpcMainInvokeEvent, profile: string) => runOAuthLogin(profile));
 
-ipcMain.handle("clear-token-cache", (_event, profile) => {
-  clearTokenCache(profile);
-});
+// --- App self-update ---
 
-ipcMain.handle("get-token", (_event, profile) => {
-  return getToken(profile);
-});
-
-ipcMain.handle("oauth-login", (_event, profile) => {
-  return runOAuthLogin(profile);
-});
-
-// --- App self-update awareness ---
-//
-// Mason isn't bundling electron-updater yet — releases are hand-cut. This
-// just informs the user when a newer GitHub Release exists so they can run
-// the install one-liner or download the DMG. Compare semver (no prereleases).
-
-function compareSemver(a, b) {
-  const parse = (v) => v.replace(/^v/, "").split(/[.-]/).map((n) => parseInt(n, 10) || 0);
+function compareSemver(a: string, b: string): number {
+  const parse = (v: string): number[] => v.replace(/^v/, "").split(/[.-]/).map((n) => parseInt(n, 10) || 0);
   const [aMaj, aMin, aPatch] = parse(a);
   const [bMaj, bMin, bPatch] = parse(b);
   if (aMaj !== bMaj) return aMaj - bMaj;
@@ -326,7 +318,7 @@ function compareSemver(a, b) {
 
 ipcMain.handle("get-app-version", () => app.getVersion());
 
-ipcMain.handle("set-titlebar-overlay", (event, isDark) => {
+ipcMain.handle("set-titlebar-overlay", (event: IpcMainInvokeEvent, isDark: boolean) => {
   if (process.platform !== "win32") return;
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) return;
@@ -340,14 +332,16 @@ ipcMain.handle("set-titlebar-overlay", (event, isDark) => {
 ipcMain.handle("check-update", async () => {
   const current = app.getVersion();
   try {
-    const res = await fetchWithTimeout(`https://api.github.com/repos/${MASON_REPO}/releases/latest`, {
-      headers: { "User-Agent": "mason-update-check", Accept: "application/vnd.github+json" },
-    }, 10000);
+    const res = await fetchWithTimeout(
+      `https://api.github.com/repos/${MASON_REPO}/releases/latest`,
+      { headers: { "User-Agent": "mason-update-check", Accept: "application/vnd.github+json" } },
+      10000
+    );
     if (!res.ok) {
       console.error(`[UPDATE] GitHub API HTTP ${res.status}`);
       return { current, latest: null, hasUpdate: false, error: `HTTP ${res.status}` };
     }
-    const data = await res.json();
+    const data: any = await res.json();
     const latest = (data.tag_name || "").replace(/^v/, "");
     if (!latest) return { current, latest: null, hasUpdate: false, error: "no tag" };
     const hasUpdate = compareSemver(latest, current) > 0;
@@ -358,43 +352,35 @@ ipcMain.handle("check-update", async () => {
       releaseUrl: data.html_url || MASON_RELEASES_URL,
       publishedAt: data.published_at,
       notes: (data.body || "").slice(0, 800),
-      // Surface auto-update capability so the renderer knows whether to show
-      // the "Update now" button vs only "Open release page".
       autoUpdateSupported: process.platform === "darwin" && app.isPackaged,
     };
   } catch (err) {
-    console.error("[UPDATE] check failed:", err.message);
-    return { current, latest: null, hasUpdate: false, error: err.message };
+    console.error("[UPDATE] check failed:", (err as Error).message);
+    return { current, latest: null, hasUpdate: false, error: (err as Error).message };
   }
 });
 
-ipcMain.handle("open-release-page", (_event, url) => {
+ipcMain.handle("open-release-page", (_event: IpcMainInvokeEvent, url?: string) => {
   const target = url || MASON_RELEASES_URL;
-  // Validate before shelling out — only ever open github.com URLs.
   if (!/^https:\/\/github\.com\//.test(target)) return false;
   shell.openExternal(target);
   return true;
 });
 
-// Run the install one-liner detached, then relaunch Mason. Mason quits while
-// the script runs so install.sh's `rm -rf /Applications/Mason.app` can
-// succeed. macOS only — Windows/Linux installers don't have a single-liner.
 ipcMain.handle("apply-update", () => {
   if (process.platform !== "darwin") {
     return { ok: false, error: "Auto-update only supported on macOS today." };
   }
   if (!app.isPackaged) {
-    return { ok: false, error: "Auto-update is disabled in dev mode (npm start). Quit and rerun npm start manually." };
+    return {
+      ok: false,
+      error: "Auto-update is disabled in dev mode (npm start). Quit and rerun npm start manually.",
+    };
   }
   const logsDir = path.join(MASON_HOME, "logs");
   if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
   const logFile = path.join(logsDir, `update-${Date.now()}.log`);
   console.log(`[UPDATE] Spawning installer; log -> ${logFile}`);
-  // - sleep gives Mason time to fully exit before install.sh tries to nuke
-  //   /Applications/Mason.app.
-  // - install.sh is the same canonical one-liner users run from terminal.
-  // - On success: relaunch via `open -a Mason`. On failure: native dialog so
-  //   the user isn't left guessing.
   const installUrl = "https://raw.githubusercontent.com/databricks-solutions/mason/main/scripts/install.sh";
   const script = [
     `set -e`,
@@ -414,12 +400,11 @@ ipcMain.handle("apply-update", () => {
     env: shellEnv,
   });
   proc.unref();
-  // Quit on the next tick so this IPC reply still gets back to the renderer.
   setTimeout(() => app.quit(), 100);
   return { ok: true, logFile };
 });
 
-// --- Databricks CLI: detect & install ---
+// --- Databricks CLI install ---
 
 ipcMain.handle("detect-cli", () => {
   const cliPath = databricksCliPath();
@@ -427,9 +412,8 @@ ipcMain.handle("detect-cli", () => {
   return { installed: true, path: cliPath, version: getCliVersion(cliPath) };
 });
 
-// Map process.platform/process.arch to the Databricks CLI release asset name fragments.
-function cliPlatformAsset() {
-  let osPart, archPart, ext;
+function cliPlatformAsset(): { osPart: string; archPart: string; ext: string } {
+  let osPart: string, archPart: string, ext: string;
   if (process.platform === "darwin") {
     osPart = "darwin";
     archPart = process.arch === "arm64" ? "arm64" : "amd64";
@@ -448,15 +432,23 @@ function cliPlatformAsset() {
   return { osPart, archPart, ext };
 }
 
-async function downloadToFile(url, dest, onProgress) {
-  const res = await fetchWithTimeout(url, {
-    headers: { "User-Agent": "mason-installer", Accept: "application/octet-stream" },
-    redirect: "follow",
-  }, 120000);
+async function downloadToFile(
+  url: string,
+  dest: string,
+  onProgress?: (percent: number) => void
+): Promise<void> {
+  const res = await fetchWithTimeout(
+    url,
+    {
+      headers: { "User-Agent": "mason-installer", Accept: "application/octet-stream" },
+      redirect: "follow",
+    },
+    120000
+  );
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
   const total = Number(res.headers.get("content-length")) || 0;
   let received = 0;
-  const reader = res.body.getReader();
+  const reader = (res.body as any).getReader();
   const out = fs.createWriteStream(dest);
   try {
     while (true) {
@@ -468,29 +460,29 @@ async function downloadToFile(url, dest, onProgress) {
     }
   } finally {
     out.end();
-    await new Promise((r) => out.on("close", r));
+    await new Promise<void>((r) => out.on("close", () => r()));
   }
 }
 
-ipcMain.handle("install-cli", async (event) => {
+ipcMain.handle("install-cli", async (event: IpcMainInvokeEvent) => {
   const win = BrowserWindow.fromWebContents(event.sender);
-  const send = (phase, percent) => {
+  const send = (phase: string, percent: number): void => {
     if (win) win.webContents.send("cli-install-progress", { phase, percent });
   };
   try {
     send("query-release", 0);
-    // Use the GitHub releases redirect: /releases/latest/download/<asset>.
-    // First, find the version + asset name via the releases API.
-    const releaseRes = await fetchWithTimeout("https://api.github.com/repos/databricks/cli/releases/latest", {
-      headers: { "User-Agent": "mason-installer", Accept: "application/vnd.github+json" },
-    }, 30000);
+    const releaseRes = await fetchWithTimeout(
+      "https://api.github.com/repos/databricks/cli/releases/latest",
+      { headers: { "User-Agent": "mason-installer", Accept: "application/vnd.github+json" } },
+      30000
+    );
     if (!releaseRes.ok) throw new Error(`Release lookup failed: HTTP ${releaseRes.status}`);
-    const release = await releaseRes.json();
-    const tag = release.tag_name; // "vX.Y.Z"
+    const release: any = await releaseRes.json();
+    const tag = release.tag_name;
     const version = tag.replace(/^v/, "");
     const { osPart, archPart, ext } = cliPlatformAsset();
     const assetName = `databricks_cli_${version}_${osPart}_${archPart}.${ext}`;
-    const asset = (release.assets || []).find((a) => a.name === assetName);
+    const asset = (release.assets || []).find((a: any) => a.name === assetName);
     if (!asset) throw new Error(`No matching asset for this platform (looked for ${assetName})`);
     console.log(`[CLI] Found ${assetName} → ${asset.browser_download_url}`);
 
@@ -502,9 +494,11 @@ ipcMain.handle("install-cli", async (event) => {
 
     send("extract", 0);
     if (ext === "zip") {
-      // macOS / Linux ship `unzip`; Windows ships PowerShell Expand-Archive.
       if (process.platform === "win32") {
-        execSync(`powershell -Command "Expand-Archive -Path '${archive}' -DestinationPath '${tmpDir}' -Force"`, { stdio: "ignore" });
+        execSync(
+          `powershell -Command "Expand-Archive -Path '${archive}' -DestinationPath '${tmpDir}' -Force"`,
+          { stdio: "ignore" }
+        );
       } else {
         execSync(`unzip -oq "${archive}" -d "${tmpDir}"`, { stdio: "ignore" });
       }
@@ -512,17 +506,17 @@ ipcMain.handle("install-cli", async (event) => {
       execSync(`tar -xzf "${archive}" -C "${tmpDir}"`, { stdio: "ignore" });
     }
 
-    // The archive contains a `databricks` (or `databricks.exe`) binary at the
-    // top level. Locate it and move into place.
     const binName = process.platform === "win32" ? "databricks.exe" : "databricks";
     const extracted = fs.readdirSync(tmpDir).map((n) => path.join(tmpDir, n));
     let srcBin = extracted.find((p) => path.basename(p) === binName);
     if (!srcBin) {
-      // Some archives nest the binary in a subdirectory.
       for (const entry of extracted) {
         if (fs.statSync(entry).isDirectory()) {
           const candidate = path.join(entry, binName);
-          if (fs.existsSync(candidate)) { srcBin = candidate; break; }
+          if (fs.existsSync(candidate)) {
+            srcBin = candidate;
+            break;
+          }
         }
       }
     }
@@ -540,63 +534,67 @@ ipcMain.handle("install-cli", async (event) => {
     console.log(`[CLI] Installed ${tag} -> ${destBin}`);
     return { installed: true, path: destBin, version: getCliVersion(destBin) || version };
   } catch (err) {
-    console.error("[CLI] Install failed:", err.message);
+    console.error("[CLI] Install failed:", (err as Error).message);
     send("error", 0);
-    throw new Error(`Databricks CLI install failed: ${err.message}`);
+    throw new Error(`Databricks CLI install failed: ${(err as Error).message}`);
   }
 });
 
-// --- Profile management (~/.databrickscfg) ---
+// --- Profile management ---
 
-// Validate at IPC boundary: untrusted text from the renderer.
-function isValidWorkspaceUrl(host) {
+function isValidWorkspaceUrl(host: string): boolean {
   if (!host) return false;
   try {
     const u = new URL(host);
     if (u.protocol !== "https:") return false;
     return /\.(databricks\.com|azuredatabricks\.net|databricksapps\.com)$/i.test(u.hostname);
-  } catch (_) { return false; }
+  } catch (_) {
+    return false;
+  }
 }
 
-ipcMain.handle("add-profile", (_event, { name, host }) => {
-  if (!name || !/^[A-Za-z0-9_.-]+$/.test(name)) throw new Error("Profile name must be alphanumeric (with . _ -)");
-  const cleanHost = String(host || "").trim().replace(/\/+$/, "");
+ipcMain.handle("add-profile", (_event: IpcMainInvokeEvent, { name, host }: { name: string; host: string }) => {
+  if (!name || !/^[A-Za-z0-9_.-]+$/.test(name))
+    throw new Error("Profile name must be alphanumeric (with . _ -)");
+  const cleanHost = String(host || "")
+    .trim()
+    .replace(/\/+$/, "");
   if (!isValidWorkspaceUrl(cleanHost)) throw new Error("Invalid workspace URL.");
 
-  // Read, replace section if exists, otherwise append. Preserve other sections verbatim.
   let text = "";
   if (fs.existsSync(DATABRICKSCFG_PATH)) {
     text = fs.readFileSync(DATABRICKSCFG_PATH, "utf-8");
   }
-  const sectionRe = new RegExp(`(^|\\n)\\[${name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\][\\s\\S]*?(?=\\n\\[|$)`);
+  const sectionRe = new RegExp(
+    `(^|\\n)\\[${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\][\\s\\S]*?(?=\\n\\[|$)`
+  );
   const block = `[${name}]\nhost = ${cleanHost}\nauth_type = databricks-cli\n`;
   if (sectionRe.test(text)) {
-    text = text.replace(sectionRe, (match, leading) => `${leading || ""}${block}`);
+    text = text.replace(sectionRe, (_match: string, leading: string) => `${leading || ""}${block}`);
   } else {
     if (text && !text.endsWith("\n")) text += "\n";
     if (text) text += "\n";
     text += block;
   }
   fs.writeFileSync(DATABRICKSCFG_PATH, text, { mode: 0o600 });
-  // Ensure permissions on a pre-existing file.
-  try { fs.chmodSync(DATABRICKSCFG_PATH, 0o600); } catch (_) {}
+  try {
+    fs.chmodSync(DATABRICKSCFG_PATH, 0o600);
+  } catch (_) {}
   console.log(`[PROFILE] Wrote profile [${name}] -> ${cleanHost}`);
   return { name, host: cleanHost };
 });
 
-ipcMain.handle("remove-profile", (_event, name) => {
+ipcMain.handle("remove-profile", (_event: IpcMainInvokeEvent, name: string) => {
   if (!fs.existsSync(DATABRICKSCFG_PATH)) return false;
   let text = fs.readFileSync(DATABRICKSCFG_PATH, "utf-8");
-  const sectionRe = new RegExp(`(^|\\n)\\[${name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\][\\s\\S]*?(?=\\n\\[|$)`);
+  const sectionRe = new RegExp(
+    `(^|\\n)\\[${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\][\\s\\S]*?(?=\\n\\[|$)`
+  );
   if (!sectionRe.test(text)) return false;
   text = text.replace(sectionRe, "");
-  // Collapse any 3+ consecutive newlines that the removal may have left.
   text = text.replace(/\n{3,}/g, "\n\n").replace(/^\n+/, "");
   fs.writeFileSync(DATABRICKSCFG_PATH, text, { mode: 0o600 });
-  // Drop any cached token for that profile.
   clearTokenCache(name);
-  // Also drop the matching entry from Mason's per-profile workspace config —
-  // it's keyed by profile name and would otherwise stay as orphaned data.
   const workspaces = loadWorkspaces();
   if (Object.prototype.hasOwnProperty.call(workspaces, name)) {
     delete workspaces[name];
@@ -607,10 +605,7 @@ ipcMain.handle("remove-profile", (_event, name) => {
   return true;
 });
 
-// Garbage-collect any workspaces.json entries whose profile no longer exists in
-// ~/.databrickscfg. Cheap (just a Set diff) and only writes when something
-// actually changed, so safe to run on every startup.
-function gcOrphanedWorkspaceEntries() {
+function gcOrphanedWorkspaceEntries(): void {
   if (!fs.existsSync(WORKSPACES_FILE)) return;
   const workspaces = loadWorkspaces();
   const known = new Set(parseDatabricksCfg().map((p) => p.name));
@@ -618,13 +613,24 @@ function gcOrphanedWorkspaceEntries() {
   if (orphans.length === 0) return;
   for (const name of orphans) delete workspaces[name];
   saveWorkspaces(workspaces);
-  console.log(`[WORKSPACE] GC removed ${orphans.length} orphaned entr${orphans.length === 1 ? "y" : "ies"}: ${orphans.join(", ")}`);
+  console.log(
+    `[WORKSPACE] GC removed ${orphans.length} orphaned entr${orphans.length === 1 ? "y" : "ies"}: ${orphans.join(", ")}`
+  );
 }
 
-// --- Workspace config persistence ---
-// workspaces.json: { "PROFILE_NAME": { gatewayUrl, mcpServers[], customEndpoints[] }, ... }
+// --- Workspace config ---
 
-function loadWorkspaces() {
+interface WorkspaceConfig {
+  gatewayUrl?: string;
+  mcpServers?: string[];
+  customEndpoints?: any[];
+  stdioServers?: Array<{ name: string; config: any }>;
+  defaultModel?: any;
+  [k: string]: any;
+}
+type Workspaces = Record<string, WorkspaceConfig>;
+
+function loadWorkspaces(): Workspaces {
   if (!fs.existsSync(WORKSPACES_FILE)) return {};
   try {
     return JSON.parse(fs.readFileSync(WORKSPACES_FILE, "utf-8"));
@@ -633,40 +639,47 @@ function loadWorkspaces() {
   }
 }
 
-function saveWorkspaces(data) {
+function saveWorkspaces(data: Workspaces): void {
   if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(WORKSPACES_FILE, JSON.stringify(data, null, 2));
 }
 
-function getWorkspaceConfig(profile) {
+function getWorkspaceConfig(profile: string): WorkspaceConfig {
   const all = loadWorkspaces();
   return all[profile] || { gatewayUrl: "", mcpServers: [], customEndpoints: [] };
 }
 
-function setWorkspaceConfig(profile, config) {
+function setWorkspaceConfig(profile: string, config: WorkspaceConfig): void {
   const all = loadWorkspaces();
   all[profile] = config;
   saveWorkspaces(all);
 }
 
-ipcMain.handle("workspace-load", (_event, profile) => getWorkspaceConfig(profile));
-
-ipcMain.handle("workspace-save", (_event, { profile, config }) => {
+ipcMain.handle("workspace-load", (_event: IpcMainInvokeEvent, profile: string) => getWorkspaceConfig(profile));
+ipcMain.handle("workspace-save", (_event: IpcMainInvokeEvent, { profile, config }: { profile: string; config: WorkspaceConfig }) => {
   setWorkspaceConfig(profile, config);
 });
-
 ipcMain.handle("workspaces-load-all", () => loadWorkspaces());
 
-// Legacy compat — redirect to workspace config
-ipcMain.handle("mcp-config-load", (_event, profile) => {
+ipcMain.handle("mcp-config-load", (_event: IpcMainInvokeEvent, profile: string) => {
   return getWorkspaceConfig(profile || "DEFAULT").mcpServers || [];
 });
 
-ipcMain.handle("mcp-global-config-load", () => {
+interface McpGlobalConfig {
+  http: string[];
+  stdio: Array<{
+    name: string;
+    command: string;
+    args?: string[];
+    env?: Record<string, string>;
+    enabledByDefault?: boolean;
+  }>;
+}
+
+ipcMain.handle("mcp-global-config-load", (): McpGlobalConfig => {
   if (!fs.existsSync(MCP_SERVERS_FILE)) return { http: [], stdio: [] };
   try {
     const data = JSON.parse(fs.readFileSync(MCP_SERVERS_FILE, "utf-8"));
-    // Handle legacy format (plain array of URLs)
     if (Array.isArray(data)) return { http: data, stdio: [] };
     return { http: data.http || [], stdio: data.stdio || [] };
   } catch (_) {
@@ -674,8 +687,8 @@ ipcMain.handle("mcp-global-config-load", () => {
   }
 });
 
-ipcMain.handle("mcp-global-config-save", (_event, { stdio }) => {
-  let existing = { http: [], stdio: [] };
+ipcMain.handle("mcp-global-config-save", (_event: IpcMainInvokeEvent, { stdio }: { stdio: McpGlobalConfig["stdio"] }) => {
+  let existing: McpGlobalConfig = { http: [], stdio: [] };
   if (fs.existsSync(MCP_SERVERS_FILE)) {
     try {
       const data = JSON.parse(fs.readFileSync(MCP_SERVERS_FILE, "utf-8"));
@@ -687,13 +700,16 @@ ipcMain.handle("mcp-global-config-save", (_event, { stdio }) => {
   fs.writeFileSync(MCP_SERVERS_FILE, JSON.stringify(existing, null, 2));
 });
 
-// --- Global app settings (preferences that aren't per-workspace) ---
-// Stored at ~/.mason/config/settings.json so they survive reinstalls and
-// are inspectable. Currently: darkMode, systemPrompt, autoLoadTools.
+// --- Global settings ---
 
-const DEFAULT_SETTINGS = { darkMode: false, systemPrompt: "", autoLoadTools: true };
+interface Settings {
+  darkMode: boolean;
+  systemPrompt: string;
+  autoLoadTools: boolean;
+}
+const DEFAULT_SETTINGS: Settings = { darkMode: false, systemPrompt: "", autoLoadTools: true };
 
-function readSettings() {
+function readSettings(): Settings {
   if (!fs.existsSync(SETTINGS_FILE)) return { ...DEFAULT_SETTINGS };
   try {
     const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8"));
@@ -703,28 +719,22 @@ function readSettings() {
   }
 }
 
-function writeSettings(settings) {
+function writeSettings(settings: Settings): void {
   if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
 }
 
 ipcMain.handle("settings-load", () => readSettings());
 
-ipcMain.handle("settings-save", (_event, partial) => {
-  // Merge — callers may save just one key at a time.
+ipcMain.handle("settings-save", (_event: IpcMainInvokeEvent, partial: Partial<Settings>) => {
   const next = { ...readSettings(), ...partial };
   writeSettings(next);
   return next;
 });
 
-// --- ai-dev-kit (Databricks AI Dev Kit) install / detect / uninstall ---
-//
-// The upstream installer lives at github.com/databricks-solutions/ai-dev-kit;
-// it provisions a Python venv + clones the repo at ~/.ai-dev-kit and installs
-// MCP server + skills. We shell out to it (don't reimplement) and then
-// register the resulting stdio MCP server with Mason.
+// --- ai-dev-kit ---
 
-function readDevkitVersion() {
+function readDevkitVersion(): string | null {
   try {
     if (fs.existsSync(DEVKIT_VERSION_FILE)) {
       return fs.readFileSync(DEVKIT_VERSION_FILE, "utf-8").trim();
@@ -734,7 +744,10 @@ function readDevkitVersion() {
 }
 
 ipcMain.handle("detect-devkit", () => {
-  const installed = fs.existsSync(DEVKIT_REPO_DIR) && fs.existsSync(DEVKIT_VENV_PYTHON) && fs.existsSync(DEVKIT_MCP_ENTRY);
+  const installed =
+    fs.existsSync(DEVKIT_REPO_DIR) &&
+    fs.existsSync(DEVKIT_VENV_PYTHON) &&
+    fs.existsSync(DEVKIT_MCP_ENTRY);
   return {
     installed,
     repoPath: DEVKIT_REPO_DIR,
@@ -744,21 +757,7 @@ ipcMain.handle("detect-devkit", () => {
   };
 });
 
-// Append-or-replace the ai-dev-kit stdio entry in the global MCP config so
-// Mason auto-connects it on next launch.
-//
-// Sets DATABRICKS_SDK_UPSTREAM / DATABRICKS_SDK_UPSTREAM_VERSION on the spawn
-// env. The Databricks Python SDK appends those to its User-Agent header (e.g.
-// `... upstream/mason upstream-version/1.3.0`), so warehouse query history /
-// audit views can attribute calls back to Mason even when the leading product
-// token stays as `databricks-ai-dev-kit`.
-//
-// Pins DATABRICKS_CONFIG_PROFILE so the SDK's auth chain resolves
-// deterministically. Without it, profiles using `auth_type = databricks-cli`
-// can't construct credentials (the SDK doesn't auto-discover DEFAULT in all
-// scenarios). Tradeoff: a profile change in Mason doesn't propagate to the
-// running MCP subprocess until the user reinstalls or restarts Mason.
-function devkitEnv(profile) {
+function devkitEnv(profile?: string): Record<string, string> {
   return {
     DATABRICKS_CONFIG_PROFILE: profile || "DEFAULT",
     DATABRICKS_SDK_UPSTREAM: "mason",
@@ -766,8 +765,8 @@ function devkitEnv(profile) {
   };
 }
 
-function registerDevkitMcp(profile) {
-  let cfg = { http: [], stdio: [] };
+function registerDevkitMcp(profile: string): McpGlobalConfig["stdio"][number] {
+  let cfg: McpGlobalConfig = { http: [], stdio: [] };
   if (fs.existsSync(MCP_SERVERS_FILE)) {
     try {
       const data = JSON.parse(fs.readFileSync(MCP_SERVERS_FILE, "utf-8"));
@@ -789,28 +788,26 @@ function registerDevkitMcp(profile) {
   return entry;
 }
 
-// One-time migration: rewrite any pre-existing ai-dev-kit MCP entry to drop
-// DATABRICKS_CONFIG_PROFILE and add the upstream tracking vars. Safe to run
-// every startup (idempotent, no-op once the entry is normalized).
-function migrateDevkitMcpEntry() {
+function migrateDevkitMcpEntry(): void {
   if (!fs.existsSync(MCP_SERVERS_FILE)) return;
-  let cfg;
+  let cfg: any;
   try {
     cfg = JSON.parse(fs.readFileSync(MCP_SERVERS_FILE, "utf-8"));
-  } catch (_) { return; }
+  } catch (_) {
+    return;
+  }
   if (Array.isArray(cfg)) return;
   const stdio = cfg.stdio || [];
-  const idx = stdio.findIndex((s) => s.name === MCP_NAME_DEVKIT);
+  const idx = stdio.findIndex((s: any) => s.name === MCP_NAME_DEVKIT);
   if (idx === -1) return;
   const current = stdio[idx];
-  // Preserve whatever profile was previously pinned (or default to DEFAULT).
   const pinnedProfile = current.env?.DATABRICKS_CONFIG_PROFILE || "DEFAULT";
   const desired = devkitEnv(pinnedProfile);
   const needsMigrate =
-    !current.env
-    || current.env.DATABRICKS_CONFIG_PROFILE !== desired.DATABRICKS_CONFIG_PROFILE
-    || current.env.DATABRICKS_SDK_UPSTREAM !== desired.DATABRICKS_SDK_UPSTREAM
-    || current.env.DATABRICKS_SDK_UPSTREAM_VERSION !== desired.DATABRICKS_SDK_UPSTREAM_VERSION;
+    !current.env ||
+    current.env.DATABRICKS_CONFIG_PROFILE !== desired.DATABRICKS_CONFIG_PROFILE ||
+    current.env.DATABRICKS_SDK_UPSTREAM !== desired.DATABRICKS_SDK_UPSTREAM ||
+    current.env.DATABRICKS_SDK_UPSTREAM_VERSION !== desired.DATABRICKS_SDK_UPSTREAM_VERSION;
   if (!needsMigrate) return;
   stdio[idx] = { ...current, env: desired };
   cfg.stdio = stdio;
@@ -818,13 +815,13 @@ function migrateDevkitMcpEntry() {
   console.log("[DEVKIT] Migrated ai-dev-kit MCP entry env to upstream tracking");
 }
 
-function unregisterDevkitMcp() {
+function unregisterDevkitMcp(): boolean {
   if (!fs.existsSync(MCP_SERVERS_FILE)) return false;
   try {
     const data = JSON.parse(fs.readFileSync(MCP_SERVERS_FILE, "utf-8"));
     if (Array.isArray(data)) return false;
     const before = (data.stdio || []).length;
-    data.stdio = (data.stdio || []).filter((s) => s.name !== MCP_NAME_DEVKIT);
+    data.stdio = (data.stdio || []).filter((s: any) => s.name !== MCP_NAME_DEVKIT);
     if (data.stdio.length === before) return false;
     fs.writeFileSync(MCP_SERVERS_FILE, JSON.stringify(data, null, 2));
     return true;
@@ -833,19 +830,16 @@ function unregisterDevkitMcp() {
   }
 }
 
-// Spawn `bash -lc "<cmd>"` so PATH lookups for uv/curl/git resolve via the
-// user's login shell (matches getShellEnv semantics). Stream stdout/stderr
-// lines to the renderer as devkit-install-progress events.
-function spawnInstallStep(win, cmd, phase) {
+function spawnInstallStep(win: BrowserWindow | null, cmd: string, phase: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn("bash", ["-lc", cmd], { env: shellEnv });
-    const send = (line) => {
+    const send = (line: string): void => {
       if (!line) return;
       console.log(`[DEVKIT] ${phase}: ${line}`);
       if (win && !win.isDestroyed()) win.webContents.send("devkit-install-progress", { phase, line });
     };
     let buffer = "";
-    const onChunk = (data) => {
+    const onChunk = (data: Buffer): void => {
       buffer += data.toString();
       let idx;
       while ((idx = buffer.indexOf("\n")) !== -1) {
@@ -853,8 +847,8 @@ function spawnInstallStep(win, cmd, phase) {
         buffer = buffer.slice(idx + 1);
       }
     };
-    proc.stdout.on("data", onChunk);
-    proc.stderr.on("data", onChunk);
+    proc.stdout?.on("data", onChunk);
+    proc.stderr?.on("data", onChunk);
     proc.on("close", (code) => {
       if (buffer.trim()) send(buffer.trim());
       if (code === 0) resolve();
@@ -864,13 +858,12 @@ function spawnInstallStep(win, cmd, phase) {
   });
 }
 
-ipcMain.handle("install-devkit", async (event, { profile } = {}) => {
+ipcMain.handle("install-devkit", async (event: IpcMainInvokeEvent, { profile }: { profile?: string } = {}) => {
   const win = BrowserWindow.fromWebContents(event.sender);
-  const send = (phase, line) => {
+  const send = (phase: string, line: string): void => {
     if (win && !win.isDestroyed()) win.webContents.send("devkit-install-progress", { phase, line });
   };
   try {
-    // 1. Ensure uv is installed (ai-dev-kit's installer requires it).
     send("uv-check", "Checking for uv (Python package manager)…");
     let hasUv = false;
     try {
@@ -884,33 +877,27 @@ ipcMain.handle("install-devkit", async (event, { profile } = {}) => {
       send("uv-check", "uv already installed");
     }
 
-    // 2. Run the upstream ai-dev-kit installer. --tools "" tells it not to
-    //    wire itself into Claude Code/Cursor/etc — Mason consumes the MCP
-    //    directly via the global stdio config.
     send("devkit-install", "Running Databricks AI Dev Kit installer…");
     const profileArg = profile ? ` --profile "${profile.replace(/"/g, '\\"')}"` : "";
     await spawnInstallStep(
       win,
       `bash <(curl -fsSL ${DEVKIT_INSTALL_URL}) --global --silent --tools ""${profileArg}`,
-      "devkit-install",
+      "devkit-install"
     );
 
-    // 3. Register the MCP entry with Mason.
     send("register", "Registering MCP server with Mason…");
     const entry = registerDevkitMcp(profile || "DEFAULT");
     send("done", "Installed");
     return { installed: true, version: readDevkitVersion(), entry };
   } catch (err) {
-    console.error("[DEVKIT] install failed:", err.message);
-    send("error", err.message);
-    throw new Error(`AI Dev Kit install failed: ${err.message}`);
+    console.error("[DEVKIT] install failed:", (err as Error).message);
+    send("error", (err as Error).message);
+    throw new Error(`AI Dev Kit install failed: ${(err as Error).message}`);
   }
 });
 
 ipcMain.handle("uninstall-devkit", async () => {
-  // Remove the MCP entry first (cheap, no chance of half-state).
   unregisterDevkitMcp();
-  // Then remove the install dir if it exists.
   if (fs.existsSync(DEVKIT_DIR)) {
     fs.rmSync(DEVKIT_DIR, { recursive: true, force: true });
   }
@@ -918,61 +905,62 @@ ipcMain.handle("uninstall-devkit", async () => {
   return { uninstalled: true };
 });
 
-ipcMain.handle("mcp-config-save", (_event, { profile, servers }) => {
+ipcMain.handle("mcp-config-save", (_event: IpcMainInvokeEvent, { profile, servers }: { profile?: string; servers: string[] }) => {
   const config = getWorkspaceConfig(profile || "DEFAULT");
   config.mcpServers = servers;
   setWorkspaceConfig(profile || "DEFAULT", config);
 });
 
-ipcMain.handle("endpoints-load", (_event, profile) => {
+ipcMain.handle("endpoints-load", (_event: IpcMainInvokeEvent, profile: string) => {
   return getWorkspaceConfig(profile || "DEFAULT").customEndpoints || [];
 });
 
-ipcMain.handle("endpoints-save", (_event, { profile, endpoints }) => {
+ipcMain.handle("endpoints-save", (_event: IpcMainInvokeEvent, { profile, endpoints }: { profile?: string; endpoints: any[] }) => {
   const config = getWorkspaceConfig(profile || "DEFAULT");
   config.customEndpoints = endpoints;
   setWorkspaceConfig(profile || "DEFAULT", config);
 });
 
-// --- MCP Client (stdio transport for local servers) ---
+// --- MCP stdio ---
 
-const stdioProcesses = {}; // key -> { process, pendingRequests, nextId }
+interface StdioState {
+  process: ChildProcess;
+  pendingRequests: Record<number, { resolve: (msg: any) => void; reject: (err: Error) => void }>;
+  nextId: number;
+  buffer: string;
+}
 
-function stdioKey(config) {
+const stdioProcesses: Record<string, StdioState> = {};
+
+function stdioKey(config: { command: string; args?: string[] }): string {
   return `stdio:${config.command}:${(config.args || []).join(":")}`;
 }
 
-function spawnStdioServer(config) {
+function spawnStdioServer(config: { command: string; args?: string[]; env?: Record<string, string> }): StdioState {
   const key = stdioKey(config);
-  if (stdioProcesses[key]?.process && !stdioProcesses[key].process.killed) {
-    return stdioProcesses[key];
+  const existing = stdioProcesses[key];
+  if (existing?.process && !existing.process.killed) {
+    return existing;
   }
 
   console.log(`[MCP-STDIO] Spawning: ${config.command} ${(config.args || []).join(" ")}`);
-  // Use the resolved login-shell PATH (shellEnv) instead of Electron's bare
-  // process.env. macOS GUI apps don't inherit the user's shell PATH, so
-  // children spawned with raw process.env can't find `databricks`,
-  // `git`, etc. — which breaks any MCP server that shells out (ai-dev-kit's
-  // databricks-cli auth path is the canonical case). Also prepend
-  // ~/.mason/bin so a Mason-managed Databricks CLI is findable.
   const augmentedPath = [BIN_DIR, shellEnv.PATH].filter(Boolean).join(":");
-  const env = { ...shellEnv, PATH: augmentedPath, ...(config.env || {}) };
+  const env: NodeJS.ProcessEnv = { ...shellEnv, PATH: augmentedPath, ...(config.env || {}) };
   const proc = spawn(config.command, config.args || [], {
     env,
     stdio: ["pipe", "pipe", "pipe"],
   });
 
-  const state = {
+  const state: StdioState = {
     process: proc,
     pendingRequests: {},
     nextId: 1,
     buffer: "",
   };
 
-  proc.stdout.on("data", (data) => {
+  proc.stdout?.on("data", (data: Buffer) => {
     state.buffer += data.toString();
-    // Process newline-delimited JSON-RPC messages
-    let newlineIdx;
+    let newlineIdx: number;
     while ((newlineIdx = state.buffer.indexOf("\n")) !== -1) {
       const line = state.buffer.slice(0, newlineIdx).trim();
       state.buffer = state.buffer.slice(newlineIdx + 1);
@@ -986,21 +974,20 @@ function spawnStdioServer(config) {
           resolve(msg);
         }
       } catch (e) {
-        console.error(`[MCP-STDIO] Parse error:`, e.message, `line:`, line.slice(0, 100));
+        console.error(`[MCP-STDIO] Parse error:`, (e as Error).message, `line:`, line.slice(0, 100));
       }
     }
   });
 
-  proc.stderr.on("data", (data) => {
+  proc.stderr?.on("data", (data: Buffer) => {
     console.error(`[MCP-STDIO] stderr:`, data.toString().trim());
   });
 
   proc.on("close", (code) => {
     console.log(`[MCP-STDIO] Process exited with code ${code}`);
-    // Reject all pending requests
     for (const [id, { reject }] of Object.entries(state.pendingRequests)) {
       reject(new Error(`MCP stdio process exited (code ${code})`));
-      delete state.pendingRequests[id];
+      delete state.pendingRequests[Number(id)];
     }
     delete stdioProcesses[key];
   });
@@ -1009,15 +996,14 @@ function spawnStdioServer(config) {
   return state;
 }
 
-function stdioRequest(state, method, params = {}) {
+function stdioRequest(state: StdioState, method: string, params: any = {}): Promise<any> {
   return new Promise((resolve, reject) => {
     const id = state.nextId++;
     const msg = { jsonrpc: "2.0", id, method, params };
     console.log(`[MCP-STDIO] >>> ${method} (id=${id})`);
     state.pendingRequests[id] = { resolve, reject };
-    state.process.stdin.write(JSON.stringify(msg) + "\n");
+    state.process.stdin?.write(JSON.stringify(msg) + "\n");
 
-    // Timeout after 30s
     setTimeout(() => {
       if (state.pendingRequests[id]) {
         delete state.pendingRequests[id];
@@ -1027,16 +1013,15 @@ function stdioRequest(state, method, params = {}) {
   });
 }
 
-function stdioNotify(state, method, params = {}) {
+function stdioNotify(state: StdioState, method: string, params: any = {}): void {
   const msg = { jsonrpc: "2.0", method, params };
-  state.process.stdin.write(JSON.stringify(msg) + "\n");
+  state.process.stdin?.write(JSON.stringify(msg) + "\n");
 }
 
-ipcMain.handle("mcp-stdio-connect", async (_event, { config }) => {
+ipcMain.handle("mcp-stdio-connect", async (_event: IpcMainInvokeEvent, { config }: { config: any }) => {
   console.log(`[MCP-STDIO] Connecting to ${config.command}...`);
   const state = spawnStdioServer(config);
 
-  // Initialize
   const initResult = await stdioRequest(state, "initialize", {
     protocolVersion: "2025-03-26",
     capabilities: {},
@@ -1044,53 +1029,54 @@ ipcMain.handle("mcp-stdio-connect", async (_event, { config }) => {
   });
   console.log(`[MCP-STDIO] Initialized:`, JSON.stringify(initResult.result?.serverInfo || {}).slice(0, 200));
 
-  // Send initialized notification
   stdioNotify(state, "notifications/initialized");
 
-  // List tools
   const toolsResult = await stdioRequest(state, "tools/list");
   const tools = toolsResult.result?.tools || [];
-  console.log(`[MCP-STDIO] Found ${tools.length} tools:`, tools.map((t) => t.name));
+  console.log(
+    `[MCP-STDIO] Found ${tools.length} tools:`,
+    tools.map((t: any) => t.name)
+  );
 
   return {
     key: stdioKey(config),
     serverInfo: initResult.result?.serverInfo || {},
-    tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+    tools: tools.map((t: any) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
   };
 });
 
-ipcMain.handle("mcp-stdio-call-tool", async (_event, { key, toolName, args }) => {
+ipcMain.handle("mcp-stdio-call-tool", async (_event: IpcMainInvokeEvent, { key, toolName, args }: any) => {
   const state = stdioProcesses[key];
   if (!state) throw new Error(`No stdio MCP process for key: ${key}`);
-
   const result = await stdioRequest(state, "tools/call", { name: toolName, arguments: args });
   return result.result;
 });
 
-ipcMain.handle("mcp-read-config", (_event, { filePath }) => {
+ipcMain.handle("mcp-read-config", (_event: IpcMainInvokeEvent, { filePath }: { filePath: string }) => {
   if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
   const configDir = path.dirname(filePath);
   let raw = fs.readFileSync(filePath, "utf-8");
-  // Resolve template variables (e.g. ${CLAUDE_PLUGIN_ROOT})
-  // Try env vars first, then configDir, then walk up to find a dir where paths resolve
-  const varDirs = [configDir];
+  const varDirs: string[] = [configDir];
   for (let d = path.dirname(configDir), i = 0; i < 3; i++, d = path.dirname(d)) varDirs.push(d);
 
-  const resolved = varDirs.find((dir) => {
-    const test = raw.replace(/\$\{([^}]+)\}/g, (m, v) => process.env[v] || dir);
-    try {
-      const parsed = JSON.parse(test);
-      const srv = Object.values(parsed.mcpServers || {})[0];
-      return srv && fs.existsSync(srv.command);
-    } catch { return false; }
-  }) || configDir;
+  const resolved =
+    varDirs.find((dir) => {
+      const test = raw.replace(/\$\{([^}]+)\}/g, (_m, v) => process.env[v] || dir);
+      try {
+        const parsed = JSON.parse(test);
+        const srv: any = Object.values(parsed.mcpServers || {})[0];
+        return srv && fs.existsSync(srv.command);
+      } catch {
+        return false;
+      }
+    }) || configDir;
 
-  raw = raw.replace(/\$\{([^}]+)\}/g, (m, v) => process.env[v] || resolved);
+  raw = raw.replace(/\$\{([^}]+)\}/g, (_m, v) => process.env[v] || resolved);
   const data = JSON.parse(raw);
   return data.mcpServers || {};
 });
 
-ipcMain.handle("mcp-stdio-disconnect", (_event, { key }) => {
+ipcMain.handle("mcp-stdio-disconnect", (_event: IpcMainInvokeEvent, { key }: { key: string }) => {
   const state = stdioProcesses[key];
   if (state?.process && !state.process.killed) {
     state.process.kill();
@@ -1099,21 +1085,17 @@ ipcMain.handle("mcp-stdio-disconnect", (_event, { key }) => {
   delete stdioProcesses[key];
 });
 
-// Rebind any profile-bound stdio MCP entries to a new Databricks profile when
-// the user switches workspaces in Mason. For each entry whose env has
-// DATABRICKS_CONFIG_PROFILE set, we (1) rewrite the saved env so it points at
-// the new profile and (2) kill the running subprocess. The renderer's
-// autoConnectMcp loop then respawns it with the new env so the SDK inside
-// re-auths against the right workspace.
-ipcMain.handle("mcp-stdio-rebind-profile", (_event, { profile }) => {
+ipcMain.handle("mcp-stdio-rebind-profile", (_event: IpcMainInvokeEvent, { profile }: { profile: string }) => {
   if (!profile || !fs.existsSync(MCP_SERVERS_FILE)) return { rebound: [] };
-  let cfg;
+  let cfg: any;
   try {
     cfg = JSON.parse(fs.readFileSync(MCP_SERVERS_FILE, "utf-8"));
-  } catch (_) { return { rebound: [] }; }
+  } catch (_) {
+    return { rebound: [] };
+  }
   if (Array.isArray(cfg)) return { rebound: [] };
   const stdio = cfg.stdio || [];
-  const rebound = [];
+  const rebound: string[] = [];
   let changed = false;
   for (const entry of stdio) {
     if (!entry.env || entry.env.DATABRICKS_CONFIG_PROFILE === undefined) continue;
@@ -1123,13 +1105,12 @@ ipcMain.handle("mcp-stdio-rebind-profile", (_event, { profile }) => {
       changed = true;
     }
     rebound.push(entry.name);
-    // Always kill the running process — even if the saved env was already
-    // correct, the spawned subprocess inherited whatever env existed when it
-    // started. Renderer respawns it via autoConnectMcp.
     const key = `stdio:${entry.command}:${(entry.args || []).join(":")}`;
     const state = stdioProcesses[key];
     if (state?.process && !state.process.killed) {
-      try { state.process.kill("SIGTERM"); } catch (_) {}
+      try {
+        state.process.kill("SIGTERM");
+      } catch (_) {}
       console.log(`[MCP-STDIO] Killed for profile rebind: ${entry.name} -> ${profile}`);
     }
     delete stdioProcesses[key];
@@ -1138,34 +1119,30 @@ ipcMain.handle("mcp-stdio-rebind-profile", (_event, { profile }) => {
   return { rebound, changed };
 });
 
-// --- MCP Client (Streamable HTTP transport) ---
+// --- MCP HTTP (Streamable transport) ---
 
-const mcpSessions = {}; // serverUrl -> { sessionId, tools }
+interface McpSession {
+  sessionId?: string;
+  tools?: any[];
+}
+const mcpSessions: Record<string, McpSession> = {};
 
-async function mcpRequest(serverUrl, token, method, params = {}) {
+async function mcpRequest(serverUrl: string, token: string, method: string, params: any = {}): Promise<any> {
   const session = mcpSessions[serverUrl];
-  const headers = {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json, text/event-stream",
     "Accept-Encoding": "identity",
     Authorization: `Bearer ${token}`,
     "MCP-Protocol-Version": "2025-03-26",
   };
-  if (session?.sessionId) {
-    headers["MCP-Session-Id"] = session.sessionId;
-  }
+  if (session?.sessionId) headers["MCP-Session-Id"] = session.sessionId;
 
-  const body = {
-    jsonrpc: "2.0",
-    id: Date.now(),
-    method,
-    params,
-  };
-
+  const body = { jsonrpc: "2.0", id: Date.now(), method, params };
   console.log(`[MCP] >>> ${method} -> ${serverUrl}`);
   console.log(`[MCP] >>> body:`, sanitizeLog(JSON.stringify(body, null, 2)));
 
-  let res;
+  let res: Response;
   try {
     res = await fetchWithTimeout(serverUrl, {
       method: "POST",
@@ -1173,13 +1150,14 @@ async function mcpRequest(serverUrl, token, method, params = {}) {
       body: JSON.stringify(body),
     });
   } catch (err) {
-    console.error(`[MCP] !!! Network error for ${method}:`, err.message);
-    throw new Error(`MCP network error: ${err.message}`);
+    console.error(`[MCP] !!! Network error for ${method}:`, (err as Error).message);
+    throw new Error(`MCP network error: ${(err as Error).message}`);
   }
 
-  console.log(`[MCP] <<< ${method} status=${res.status} content-type=${res.headers.get("content-type")}`);
+  console.log(
+    `[MCP] <<< ${method} status=${res.status} content-type=${res.headers.get("content-type")}`
+  );
 
-  // Capture session ID from initialize response
   const newSessionId = res.headers.get("mcp-session-id");
   if (newSessionId) {
     console.log(`[MCP] Session ID: ${newSessionId}`);
@@ -1190,21 +1168,23 @@ async function mcpRequest(serverUrl, token, method, params = {}) {
   if (!res.ok) {
     const raw = await res.text();
     console.error(`[MCP] !!! Error response (${res.status}):`, sanitizeLog(raw.slice(0, 500)));
-    // Log all response headers for auth debugging
     if (res.status === 401 || res.status === 403) {
-      const hdrs = {};
-      res.headers.forEach((v, k) => { hdrs[k] = v; });
+      const hdrs: Record<string, string> = {};
+      res.headers.forEach((v, k) => {
+        hdrs[k] = v;
+      });
       console.log(`[MCP] !!! Response headers:`, JSON.stringify(hdrs, null, 2));
     }
-    // Extract readable message from JSON or HTML responses
-    let msg;
+    let msg: string;
     try {
       const json = JSON.parse(raw);
       msg = json.message || json.error || JSON.stringify(json);
     } catch (_) {
-      msg = raw.includes("<html") ? `HTTP ${res.status} — server returned an HTML error page` : raw.slice(0, 200);
+      msg = raw.includes("<html")
+        ? `HTTP ${res.status} — server returned an HTML error page`
+        : raw.slice(0, 200);
     }
-    const err = new Error(`MCP ${res.status}: ${msg}`);
+    const err: any = new Error(`MCP ${res.status}: ${msg}`);
     err.statusCode = res.status;
     throw err;
   }
@@ -1215,7 +1195,7 @@ async function mcpRequest(serverUrl, token, method, params = {}) {
     const text = await res.text();
     console.log(`[MCP] <<< SSE body:`, sanitizeLog(text.slice(0, 500)));
     const lines = text.split("\n");
-    let lastData = null;
+    let lastData: string | null = null;
     for (const line of lines) {
       if (line.startsWith("data: ")) {
         const d = line.slice(6).trim();
@@ -1235,10 +1215,9 @@ async function mcpRequest(serverUrl, token, method, params = {}) {
   return json;
 }
 
-ipcMain.handle("mcp-connect", async (_event, { serverUrl, token }) => {
+ipcMain.handle("mcp-connect", async (_event: IpcMainInvokeEvent, { serverUrl, token }: { serverUrl: string; token: string }) => {
   console.log(`[MCP] Connecting to ${serverUrl}...`);
 
-  // Step 1: Initialize
   const initResult = await mcpRequest(serverUrl, token, "initialize", {
     protocolVersion: "2025-03-26",
     capabilities: {},
@@ -1246,10 +1225,9 @@ ipcMain.handle("mcp-connect", async (_event, { serverUrl, token }) => {
   });
   console.log(`[MCP] Initialize result:`, sanitizeLog(JSON.stringify(initResult, null, 2).slice(0, 500)));
 
-  // Step 2: Send initialized notification
   const session = mcpSessions[serverUrl];
   console.log(`[MCP] Sending initialized notification (session=${session?.sessionId || "none"})...`);
-  const notifHeaders = {
+  const notifHeaders: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json, text/event-stream",
     Authorization: `Bearer ${token}`,
@@ -1265,105 +1243,121 @@ ipcMain.handle("mcp-connect", async (_event, { serverUrl, token }) => {
     });
     console.log(`[MCP] Initialized notification status=${notifRes.status}`);
   } catch (err) {
-    console.error(`[MCP] Initialized notification error:`, err.message);
+    console.error(`[MCP] Initialized notification error:`, (err as Error).message);
   }
 
-  // Step 3: List tools
   const toolsResult = await mcpRequest(serverUrl, token, "tools/list");
   const tools = toolsResult.result?.tools || [];
-  console.log(`[MCP] Found ${tools.length} tools:`, tools.map((t) => t.name));
+  console.log(
+    `[MCP] Found ${tools.length} tools:`,
+    tools.map((t: any) => t.name)
+  );
 
   if (!mcpSessions[serverUrl]) mcpSessions[serverUrl] = {};
   mcpSessions[serverUrl].tools = tools;
 
   return {
     serverInfo: initResult.result?.serverInfo || {},
-    tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+    tools: tools.map((t: any) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
   };
 });
 
-ipcMain.handle("mcp-list-tools", (_event, { serverUrl }) => {
+ipcMain.handle("mcp-list-tools", (_event: IpcMainInvokeEvent, { serverUrl }: { serverUrl: string }) => {
   const session = mcpSessions[serverUrl];
   if (!session?.tools) return [];
-  return session.tools.map((t) => ({ name: t.name, description: t.description }));
+  return session.tools.map((t: any) => ({ name: t.name, description: t.description }));
 });
 
-ipcMain.handle("mcp-call-tool", async (_event, { serverUrl, token, toolName, args }) => {
-  const result = await mcpRequest(serverUrl, token, "tools/call", {
-    name: toolName,
-    arguments: args,
-  });
+ipcMain.handle("mcp-call-tool", async (_event: IpcMainInvokeEvent, { serverUrl, token, toolName, args }: any) => {
+  const result = await mcpRequest(serverUrl, token, "tools/call", { name: toolName, arguments: args });
   return result.result;
 });
 
-// --- Chat API ---
-
 // --- File dialog ---
 
-ipcMain.handle("show-open-dialog", async (_event, options) => {
+ipcMain.handle("show-open-dialog", async (_event: IpcMainInvokeEvent, options: any) => {
   return dialog.showOpenDialog(options);
 });
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
-const IMAGE_MIME = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+const IMAGE_MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+// @ts-ignore — pdf-parse has no @types
 const { PDFParse } = require("pdf-parse");
 
-ipcMain.handle("read-file-for-upload", async (_event, { filePath }) => {
+ipcMain.handle("read-file-for-upload", async (_event: IpcMainInvokeEvent, { filePath }: { filePath: string }) => {
   if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
   const stats = fs.statSync(filePath);
   const name = path.basename(filePath);
   const ext = path.extname(name).slice(1).toLowerCase();
 
-  // Images → base64 data URL for multimodal models
   if (IMAGE_EXTS.has(ext)) {
     const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-    if (stats.size > MAX_IMAGE_BYTES) throw new Error(`Image too large (${(stats.size / 1024 / 1024).toFixed(1)} MB > ${MAX_IMAGE_BYTES / 1024 / 1024} MB)`);
+    if (stats.size > MAX_IMAGE_BYTES)
+      throw new Error(
+        `Image too large (${(stats.size / 1024 / 1024).toFixed(1)} MB > ${MAX_IMAGE_BYTES / 1024 / 1024} MB)`
+      );
     const buf = fs.readFileSync(filePath);
     const dataUrl = `data:${IMAGE_MIME[ext]};base64,${buf.toString("base64")}`;
     console.log(`[UPLOAD] Read image ${stats.size} bytes from ${filePath}`);
     return { name, ext, size: stats.size, kind: "image", dataUrl };
   }
 
-  // PDFs → extract text via pdf-parse
   if (ext === "pdf") {
     const MAX_PDF_BYTES = 10 * 1024 * 1024;
-    if (stats.size > MAX_PDF_BYTES) throw new Error(`PDF too large (${(stats.size / 1024 / 1024).toFixed(1)} MB > ${MAX_PDF_BYTES / 1024 / 1024} MB)`);
+    if (stats.size > MAX_PDF_BYTES)
+      throw new Error(
+        `PDF too large (${(stats.size / 1024 / 1024).toFixed(1)} MB > ${MAX_PDF_BYTES / 1024 / 1024} MB)`
+      );
     const buf = fs.readFileSync(filePath);
     const parser = new PDFParse({ data: buf });
-    let result;
+    let result: any;
     try {
       result = await parser.getText();
     } catch (e) {
-      throw new Error(`Could not parse PDF: ${e.message}`);
+      throw new Error(`Could not parse PDF: ${(e as Error).message}`);
     } finally {
-      try { await parser.destroy(); } catch (_) {}
+      try {
+        await parser.destroy();
+      } catch (_) {}
     }
     const MAX_TEXT_CHARS = 256 * 1024;
     let content = (result.text || "").trim();
-    if (!content) throw new Error("PDF contains no extractable text (may be scanned images — OCR not supported yet)");
+    if (!content)
+      throw new Error("PDF contains no extractable text (may be scanned images — OCR not supported yet)");
     let truncated = false;
     if (content.length > MAX_TEXT_CHARS) {
       content = content.slice(0, MAX_TEXT_CHARS);
       truncated = true;
     }
-    console.log(`[UPLOAD] Extracted ${content.length} chars from ${result.total || "?"}-page PDF ${filePath}${truncated ? " (truncated)" : ""}`);
+    console.log(
+      `[UPLOAD] Extracted ${content.length} chars from ${result.total || "?"}-page PDF ${filePath}${truncated ? " (truncated)" : ""}`
+    );
     if (truncated) content += `\n\n[... PDF text truncated at ${MAX_TEXT_CHARS / 1024} KB ...]`;
     return { name, ext, size: stats.size, kind: "text", content };
   }
 
-  // Text → inline as code block
   const MAX_TEXT_BYTES = 256 * 1024;
-  if (stats.size > MAX_TEXT_BYTES) throw new Error(`Text file too large (${(stats.size / 1024).toFixed(0)} KB > ${MAX_TEXT_BYTES / 1024} KB)`);
+  if (stats.size > MAX_TEXT_BYTES)
+    throw new Error(`Text file too large (${(stats.size / 1024).toFixed(0)} KB > ${MAX_TEXT_BYTES / 1024} KB)`);
   const buf = fs.readFileSync(filePath);
-  if (buf.includes(0)) throw new Error("This file type isn't supported yet. Mason currently accepts text files (md, txt, code, csv, json, log, etc.), images (png, jpg, gif, webp), and PDFs.");
+  if (buf.includes(0))
+    throw new Error(
+      "This file type isn't supported yet. Mason currently accepts text files (md, txt, code, csv, json, log, etc.), images (png, jpg, gif, webp), and PDFs."
+    );
   const content = buf.toString("utf-8");
   console.log(`[UPLOAD] Read text ${stats.size} bytes from ${filePath}`);
   return { name, ext, size: stats.size, kind: "text", content };
 });
 
-// --- Built-in tools (local filesystem) ---
+// --- Built-in tools ---
 
-ipcMain.handle("builtin-tool-call", (_event, { toolName, args }) => {
+ipcMain.handle("builtin-tool-call", (_event: IpcMainInvokeEvent, { toolName, args }: { toolName: string; args: any }) => {
   console.log(`[BUILTIN] Calling ${toolName} with args:`, JSON.stringify(args));
 
   if (toolName === "write_file") {
@@ -1403,15 +1397,14 @@ ipcMain.handle("builtin-tool-call", (_event, { toolName, args }) => {
   return { error: `Unknown builtin tool: ${toolName}` };
 });
 
-// --- Dashboard discovery ---
+// --- Dashboards ---
 
-ipcMain.handle("list-dashboards", async (_event, { host, token }) => {
+ipcMain.handle("list-dashboards", async (_event: IpcMainInvokeEvent, { host, token }: { host: string; token: string }) => {
   if (!host || !token) return [];
   const baseUrl = `${host.replace(/\/+$/, "")}/api/2.0/lakeview/dashboards`;
   console.log(`[DASHBOARDS] Listing from ${baseUrl}`);
 
   try {
-    // Fetch first page immediately
     const params = new URLSearchParams({ page_size: "100" });
     const res = await fetchWithTimeout(`${baseUrl}?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -1420,29 +1413,29 @@ ipcMain.handle("list-dashboards", async (_event, { host, token }) => {
       console.error(`[DASHBOARDS] List failed: ${res.status}`);
       return { dashboards: [], hasMore: false };
     }
-    const data = await res.json();
+    const data: any = await res.json();
     const firstPage = data.dashboards || [];
     const nextPageToken = data.next_page_token || null;
 
-    const toResult = (arr) => arr
-      .filter((d) => d.lifecycle_state !== "TRASHED")
-      .map((d) => ({
-        id: d.dashboard_id,
-        name: d.display_name,
-        path: d.path,
-        updatedAt: d.update_time,
-      }))
-      .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+    const toResult = (arr: any[]): any[] =>
+      arr
+        .filter((d) => d.lifecycle_state !== "TRASHED")
+        .map((d) => ({
+          id: d.dashboard_id,
+          name: d.display_name,
+          path: d.path,
+          updatedAt: d.update_time,
+        }))
+        .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
 
     const dashboards = toResult(firstPage);
     console.log(`[DASHBOARDS] First page: ${dashboards.length} dashboards, hasMore: ${!!nextPageToken}`);
 
-    // Fetch remaining pages in background if there are more
     if (nextPageToken) {
       (async () => {
         const allDashboards = [...firstPage];
         let pageToken = nextPageToken;
-        const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+        const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
         while (pageToken) {
           await delay(500);
           try {
@@ -1460,11 +1453,11 @@ ipcMain.handle("list-dashboards", async (_event, { host, token }) => {
               console.error(`[DASHBOARDS] Background page failed: ${r.status}`);
               break;
             }
-            const d = await r.json();
+            const d: any = await r.json();
             allDashboards.push(...(d.dashboards || []));
             pageToken = d.next_page_token || null;
           } catch (e) {
-            console.error(`[DASHBOARDS] Background page error:`, e.message);
+            console.error(`[DASHBOARDS] Background page error:`, (e as Error).message);
             break;
           }
         }
@@ -1477,16 +1470,19 @@ ipcMain.handle("list-dashboards", async (_event, { host, token }) => {
 
     return { dashboards, hasMore: !!nextPageToken };
   } catch (err) {
-    console.error(`[DASHBOARDS] Error:`, err.message);
+    console.error(`[DASHBOARDS] Error:`, (err as Error).message);
     return { dashboards: [], hasMore: false };
   }
 });
 
 // --- External OAuth window ---
 
-ipcMain.handle("open-auth-window", async (_event, { url, title }) => {
-  // Validate URL — must be HTTPS to a Databricks workspace host
-  if (!/^https:\/\/[^/]+\.(cloud\.databricks\.com|azuredatabricks\.net|databricksapps\.com|staging\.cloud\.databricks\.com)(\/|$)/i.test(url)) {
+ipcMain.handle("open-auth-window", async (_event: IpcMainInvokeEvent, { url, title }: { url: string; title?: string }) => {
+  if (
+    !/^https:\/\/[^/]+\.(cloud\.databricks\.com|azuredatabricks\.net|databricksapps\.com|staging\.cloud\.databricks\.com)(\/|$)/i.test(
+      url
+    )
+  ) {
     throw new Error(`Refused to open non-Databricks URL: ${url}`);
   }
   return new Promise((resolve) => {
@@ -1502,16 +1498,16 @@ ipcMain.handle("open-auth-window", async (_event, { url, title }) => {
   });
 });
 
-// --- Unity Catalog connections (external MCP discovery) ---
+// --- Unity Catalog connections ---
 
-ipcMain.handle("list-uc-connections", async (_event, { host, token }) => {
+ipcMain.handle("list-uc-connections", async (_event: IpcMainInvokeEvent, { host, token }: { host: string; token: string }) => {
   if (!host || !token) return [];
   const baseUrl = `${host.replace(/\/+$/, "")}/api/2.1/unity-catalog/connections`;
   console.log(`[UC] Listing connections from ${baseUrl}`);
 
   try {
-    const allConnections = [];
-    let pageToken = null;
+    const allConnections: any[] = [];
+    let pageToken: string | null = null;
 
     while (true) {
       const params = new URLSearchParams({ max_results: "100" });
@@ -1524,28 +1520,20 @@ ipcMain.handle("list-uc-connections", async (_event, { host, token }) => {
         console.error(`[UC] List connections failed: ${res.status}`);
         break;
       }
-      const data = await res.json();
+      const data: any = await res.json();
       allConnections.push(...(data.connections || []));
 
       pageToken = data.next_page_token;
       if (!pageToken) break;
     }
 
-    // Filter to HTTP connections (required for external MCP proxy)
     const connections = allConnections
       .filter((c) => c.connection_type === "HTTP")
       .map((c) => {
-        // HTTP connections store the upstream service URL in options. The exact key
-        // varies; check the common ones. Strip trailing slashes for clean joining.
         const opts = c.options || c.properties || {};
-        const rawHost =
-          opts.host || opts.base_url || opts.host_url || opts.url || opts.endpoint || "";
+        const rawHost = opts.host || opts.base_url || opts.host_url || opts.url || opts.endpoint || "";
         const directHost = rawHost ? rawHost.replace(/\/+$/, "") : "";
-        return {
-          name: c.name,
-          comment: c.comment || "",
-          directHost,
-        };
+        return { name: c.name, comment: c.comment || "", directHost };
       });
     console.log(`[UC] Found ${connections.length} HTTP connections (of ${allConnections.length} total)`);
     for (const c of connections) {
@@ -1553,16 +1541,14 @@ ipcMain.handle("list-uc-connections", async (_event, { host, token }) => {
     }
     return connections;
   } catch (err) {
-    console.error(`[UC] Error listing connections:`, err.message);
+    console.error(`[UC] Error listing connections:`, (err as Error).message);
     return [];
   }
 });
 
 // --- Model discovery ---
 
-ipcMain.handle("discover-models", async (_event, { host, gatewayUrl, token }) => {
-  // Backwards-compat: accept either { host } (preferred — workspace API)
-  // or legacy { gatewayUrl } from older saved configs.
+ipcMain.handle("discover-models", async (_event: IpcMainInvokeEvent, { host, gatewayUrl, token }: { host?: string; gatewayUrl?: string; token: string }) => {
   const base = host || gatewayUrl;
   if (!base || !token) return [];
   const url = `${base.replace(/\/+$/, "")}/api/2.0/serving-endpoints`;
@@ -1576,256 +1562,261 @@ ipcMain.handle("discover-models", async (_event, { host, gatewayUrl, token }) =>
       console.error(`[MODELS] Discovery failed: ${res.status}`);
       return [];
     }
-    const data = await res.json();
+    const data: any = await res.json();
     const endpoints = data.endpoints || [];
 
-    // Group by provider based on name prefix. Each model carries the API format
-    // it expects ("chat" → mlflow/v1/chat/completions, "responses" → openai/v1/responses)
-    // derived from the foundation model's api_types — newer GPT models only support
-    // the Responses API, while most others support Chat Completions.
     const models = endpoints
-      .filter((e) =>
-        e.endpoint_type === "FOUNDATION_MODEL_API"
-        && e.task && e.task.includes("chat")
-        // Skip endpoints that exist but aren't actually usable (workspace
-        // hasn't enabled them yet, config update in progress, etc.).
-        && e.state?.ready === "READY"
+      .filter(
+        (e: any) =>
+          e.endpoint_type === "FOUNDATION_MODEL_API" &&
+          e.task &&
+          e.task.includes("chat") &&
+          e.state?.ready === "READY"
       )
-      .map((e) => {
+      .map((e: any) => {
         const fm = e.config?.served_entities?.[0]?.foundation_model || {};
         const apiTypes = fm.api_types || [];
         const supportsChat = apiTypes.includes("mlflow/v1/chat/completions");
         const supportsResponses = apiTypes.includes("openai/v1/responses");
-        // Default format: prefer chat (better streaming UX). Switch to responses
-        // at chat-time when tools are present and the model supports it.
-        let format;
+        let format: string | null = null;
         if (supportsChat) format = "chat";
         else if (supportsResponses) format = "responses";
-        else return null; // exposes only formats Mason can't speak
+        else return null;
 
         let provider = "Other";
-        const n = e.name;
+        const n: string = e.name;
         if (n.includes("claude")) provider = "Anthropic";
         else if (n.includes("gemini") || n.includes("gemma")) provider = "Google";
         else if (n.includes("llama") || n.includes("meta-llama")) provider = "Meta";
         else if (n.includes("gpt") || n.includes("codex")) provider = "OpenAI";
         else if (n.includes("qwen")) provider = "Qwen";
 
-        // Prefer the API-provided display name; fall back to a heuristic.
-        const label = fm.display_name
-          || n.replace(/^databricks-/, "").split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+        const label =
+          fm.display_name ||
+          n
+            .replace(/^databricks-/, "")
+            .split("-")
+            .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+            .join(" ");
 
         return { value: n, label, provider, format, apiTypes };
       })
       .filter(Boolean)
-      .sort((a, b) => a.provider.localeCompare(b.provider) || a.label.localeCompare(b.label));
+      .sort((a: any, b: any) => a.provider.localeCompare(b.provider) || a.label.localeCompare(b.label));
 
     console.log(`[MODELS] Found ${models.length} chat models`);
     return models;
   } catch (err) {
-    console.error(`[MODELS] Discovery error:`, err.message);
+    console.error(`[MODELS] Discovery error:`, (err as Error).message);
     return [];
   }
 });
 
 // --- Chat API ---
 
-ipcMain.handle("chat", async (_event, { token, model, messages, tools, gateway, format, stream }) => {
-  if (!gateway) {
-    throw new Error("No gateway URL available. Make sure the selected profile has a host in ~/.databrickscfg.");
-  }
-  let effectiveGateway = gateway;
-  effectiveGateway = effectiveGateway.replace(/\/(mlflow|openai)\/v1\/.+$/, "");
-  const isResponses = format === "responses";
-  const shouldStream = stream && !isResponses && !(tools && tools.length > 0);
-  console.log(`[CHAT] model=${model}, gateway=${effectiveGateway}, format=${isResponses ? "responses" : "chat"}, stream=${shouldStream}, messages=${messages.length}, tools=${tools ? tools.length : 0}`);
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-  };
-
-  let url, body;
-
-  if (isResponses) {
-    url = `${effectiveGateway}/openai/v1/responses`;
-    // Translate chat-completions-style history into the Responses `input` format.
-    // Plain user/assistant/system messages become {role, content:[{type, text}]}.
-    // Assistant messages with tool_calls expand into one or more `function_call`
-    // items. Role "tool" results map to `function_call_output` items keyed by
-    // the original tool_call_id.
-    const input = [];
-    for (const m of messages) {
-      if (!m) continue;
-      if (m.role === "tool") {
-        input.push({
-          type: "function_call_output",
-          call_id: m.tool_call_id,
-          output: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-        });
-        continue;
-      }
-      if (m.role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
-        if (m.content) {
-          input.push({ role: "assistant", content: [{ type: "output_text", text: m.content }] });
-        }
-        for (const tc of m.tool_calls) {
-          input.push({
-            type: "function_call",
-            call_id: tc.id,
-            name: tc.function?.name,
-            arguments: tc.function?.arguments || "{}",
-          });
-        }
-        continue;
-      }
-      if ((m.role === "user" || m.role === "assistant" || m.role === "system") && m.content) {
-        const textContent = typeof m.content === "string"
-          ? m.content
-          : (Array.isArray(m.content) ? m.content.map((p) => p.text || "").join("") : String(m.content));
-        input.push({
-          role: m.role,
-          content: [{
-            type: m.role === "assistant" ? "output_text" : "input_text",
-            text: textContent,
-          }],
-        });
-      }
-    }
-
-    body = { model, max_output_tokens: 4096, input };
-
-    // Responses API tool schema is flat (no `function:` wrapper).
-    if (tools && tools.length > 0) {
-      body.tools = tools.map((t) => ({
-        type: "function",
-        name: t.function.name,
-        description: t.function.description,
-        parameters: t.function.parameters,
-      }));
-      body.tool_choice = "auto";
-      console.log(`[CHAT] Sending ${tools.length} tools (responses format): ${tools.map((t) => t.function.name).join(", ")}`);
-    }
-  } else {
-    url = `${effectiveGateway}/mlflow/v1/chat/completions`;
-    if (tools && tools.length > 0) {
-      const toolNames = tools.map((t) => t.function.name).join(", ");
-      const systemMsg = {
-        role: "system",
-        content: `You have access to the following tools and MUST use them when the user asks for data they can provide: ${toolNames}. Always call the appropriate tool rather than saying you don't have access.`,
-      };
-      const hasSystem = messages.some((m) => m.role === "system");
-      body = {
-        model,
-        max_tokens: 4096,
-        messages: hasSystem ? messages : [systemMsg, ...messages],
-        tools,
-        tool_choice: "auto",
-      };
-      console.log(`[CHAT] Sending ${tools.length} tools: ${toolNames}`);
-    } else {
-      body = { model, max_tokens: 4096, messages };
-    }
-  }
-
-  // Enable streaming for plain chat (no tools, no responses API)
-  if (shouldStream) body.stream = true;
-
-  const res = await chatFetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  }, 120000);
-
-  if (!res.ok) {
-    const text = await res.text();
-    // The AI Gateway returns 404 + "is not enabled" in two distinct cases:
-    //   1. AI Gateway is disabled at the workspace level → every model fails.
-    //   2. AI Gateway is on but this specific model isn't enabled.
-    // We can't tell which from one response, so cover both in the message.
-    if (res.status === 404 && /is not enabled/i.test(text)) {
+ipcMain.handle(
+  "chat",
+  async (
+    _event: IpcMainInvokeEvent,
+    { token, model, messages, tools, gateway, format, stream }: any
+  ) => {
+    if (!gateway) {
       throw new Error(
-        `Can't reach the AI Gateway endpoint for "${model}". This usually means either:\n` +
-        `  • AI Gateway isn't enabled on this workspace — a workspace admin can turn it on under Compute → Serving → AI Gateway.\n` +
-        `  • The model itself isn't enabled — try a different model from the dropdown.\n` +
-        `If you have access to another workspace where Mason is known to work, switch profiles in the sidebar.`
+        "No gateway URL available. Make sure the selected profile has a host in ~/.databrickscfg."
       );
     }
-    throw new Error(`API ${res.status}: ${text}`);
-  }
+    let effectiveGateway = gateway;
+    effectiveGateway = effectiveGateway.replace(/\/(mlflow|openai)\/v1\/.+$/, "");
+    const isResponses = format === "responses";
+    const shouldStream = stream && !isResponses && !(tools && tools.length > 0);
+    console.log(
+      `[CHAT] model=${model}, gateway=${effectiveGateway}, format=${isResponses ? "responses" : "chat"}, stream=${shouldStream}, messages=${messages.length}, tools=${tools ? tools.length : 0}`
+    );
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    };
 
-  // Streaming response
-  if (shouldStream) {
-    const win = BrowserWindow.getAllWindows()[0];
-    let fullContent = "";
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    let url: string;
+    let body: any;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      let newlineIdx;
-      while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-        const line = buffer.slice(0, newlineIdx).trim();
-        buffer = buffer.slice(newlineIdx + 1);
-        if (!line.startsWith("data: ")) continue;
-        const data = line.slice(6);
-        if (data === "[DONE]") break;
-        try {
-          const chunk = JSON.parse(data);
-          const delta = chunk.choices?.[0]?.delta;
-          if (delta?.content) {
-            fullContent += delta.content;
-            if (win) win.webContents.send("chat-chunk", delta.content);
+    if (isResponses) {
+      url = `${effectiveGateway}/openai/v1/responses`;
+      const input: any[] = [];
+      for (const m of messages) {
+        if (!m) continue;
+        if (m.role === "tool") {
+          input.push({
+            type: "function_call_output",
+            call_id: m.tool_call_id,
+            output: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+          });
+          continue;
+        }
+        if (m.role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+          if (m.content) {
+            input.push({ role: "assistant", content: [{ type: "output_text", text: m.content }] });
           }
-        } catch (_) {}
+          for (const tc of m.tool_calls) {
+            input.push({
+              type: "function_call",
+              call_id: tc.id,
+              name: tc.function?.name,
+              arguments: tc.function?.arguments || "{}",
+            });
+          }
+          continue;
+        }
+        if ((m.role === "user" || m.role === "assistant" || m.role === "system") && m.content) {
+          const textContent =
+            typeof m.content === "string"
+              ? m.content
+              : Array.isArray(m.content)
+                ? m.content.map((p: any) => p.text || "").join("")
+                : String(m.content);
+          input.push({
+            role: m.role,
+            content: [
+              {
+                type: m.role === "assistant" ? "output_text" : "input_text",
+                text: textContent,
+              },
+            ],
+          });
+        }
+      }
+
+      body = { model, max_output_tokens: 4096, input };
+
+      if (tools && tools.length > 0) {
+        body.tools = tools.map((t: any) => ({
+          type: "function",
+          name: t.function.name,
+          description: t.function.description,
+          parameters: t.function.parameters,
+        }));
+        body.tool_choice = "auto";
+        console.log(
+          `[CHAT] Sending ${tools.length} tools (responses format): ${tools.map((t: any) => t.function.name).join(", ")}`
+        );
+      }
+    } else {
+      url = `${effectiveGateway}/mlflow/v1/chat/completions`;
+      if (tools && tools.length > 0) {
+        const toolNames = tools.map((t: any) => t.function.name).join(", ");
+        const systemMsg = {
+          role: "system",
+          content: `You have access to the following tools and MUST use them when the user asks for data they can provide: ${toolNames}. Always call the appropriate tool rather than saying you don't have access.`,
+        };
+        const hasSystem = messages.some((m: any) => m.role === "system");
+        body = {
+          model,
+          max_tokens: 4096,
+          messages: hasSystem ? messages : [systemMsg, ...messages],
+          tools,
+          tool_choice: "auto",
+        };
+        console.log(`[CHAT] Sending ${tools.length} tools: ${toolNames}`);
+      } else {
+        body = { model, max_tokens: 4096, messages };
       }
     }
-    return { type: "text", content: fullContent, streamed: true };
-  }
 
-  const data = await res.json();
+    if (shouldStream) body.stream = true;
 
-  if (isResponses) {
-    const items = data.output || [];
-    // Responses returns function_call items alongside the message item.
-    // Translate them into chat-completions-style tool_calls so chat.js's loop
-    // can stay agnostic.
-    const toolCalls = items
-      .filter((o) => o.type === "function_call")
-      .map((o) => ({
-        id: o.call_id,
-        type: "function",
-        function: { name: o.name, arguments: o.arguments || "{}" },
-      }));
+    const res = await chatFetch(
+      url,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      },
+      120000
+    );
 
-    const msg = items.find((o) => o.type === "message");
-    let textContent = "";
-    if (msg) {
-      const textPart = (msg.content || []).find((c) => c.type === "output_text");
-      if (textPart) textContent = textPart.text;
+    if (!res.ok) {
+      const text = await res.text();
+      if (res.status === 404 && /is not enabled/i.test(text)) {
+        throw new Error(
+          `Can't reach the AI Gateway endpoint for "${model}". This usually means either:\n` +
+            `  • AI Gateway isn't enabled on this workspace — a workspace admin can turn it on under Compute → Serving → AI Gateway.\n` +
+            `  • The model itself isn't enabled — try a different model from the dropdown.\n` +
+            `If you have access to another workspace where Mason is known to work, switch profiles in the sidebar.`
+        );
+      }
+      throw new Error(`API ${res.status}: ${text}`);
     }
 
-    if (toolCalls.length > 0) {
-      return { type: "tool_calls", content: textContent || null, tool_calls: toolCalls };
+    if (shouldStream) {
+      const win = BrowserWindow.getAllWindows()[0];
+      let fullContent = "";
+      const reader = (res.body as any).getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIdx: number;
+        while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newlineIdx).trim();
+          buffer = buffer.slice(newlineIdx + 1);
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6);
+          if (data === "[DONE]") break;
+          try {
+            const chunk = JSON.parse(data);
+            const delta = chunk.choices?.[0]?.delta;
+            if (delta?.content) {
+              fullContent += delta.content;
+              if (win) win.webContents.send("chat-chunk", delta.content);
+            }
+          } catch (_) {}
+        }
+      }
+      return { type: "text", content: fullContent, streamed: true };
     }
-    return { type: "text", content: textContent || JSON.stringify(data) };
+
+    const data: any = await res.json();
+
+    if (isResponses) {
+      const items = data.output || [];
+      const toolCalls = items
+        .filter((o: any) => o.type === "function_call")
+        .map((o: any) => ({
+          id: o.call_id,
+          type: "function",
+          function: { name: o.name, arguments: o.arguments || "{}" },
+        }));
+
+      const msg = items.find((o: any) => o.type === "message");
+      let textContent = "";
+      if (msg) {
+        const textPart = (msg.content || []).find((c: any) => c.type === "output_text");
+        if (textPart) textContent = textPart.text;
+      }
+
+      if (toolCalls.length > 0) {
+        return { type: "tool_calls", content: textContent || null, tool_calls: toolCalls };
+      }
+      return { type: "text", content: textContent || JSON.stringify(data) };
+    }
+
+    const choice = data.choices[0];
+
+    if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
+      return {
+        type: "tool_calls",
+        tool_calls: choice.message.tool_calls,
+        content: choice.message.content || "",
+      };
+    }
+
+    return { type: "text", content: choice.message.content };
   }
-
-  const choice = data.choices[0];
-
-  if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
-    return {
-      type: "tool_calls",
-      tool_calls: choice.message.tool_calls,
-      content: choice.message.content || "",
-    };
-  }
-
-  return { type: "text", content: choice.message.content };
-});
+);
 
 ipcMain.handle("abort-chat", () => {
   if (activeChatController) {
@@ -1837,10 +1828,13 @@ ipcMain.handle("abort-chat", () => {
 
 // --- Window ---
 
-let windowStateKeeper;
-try { windowStateKeeper = require("electron-window-state"); } catch (_) {}
+// @ts-ignore — electron-window-state has no types shipped.
+let windowStateKeeper: any;
+try {
+  windowStateKeeper = require("electron-window-state");
+} catch (_) {}
 
-function createWindow() {
+function createWindow(): BrowserWindow {
   const stateOpts = { defaultWidth: 1000, defaultHeight: 720 };
   const windowState = windowStateKeeper ? windowStateKeeper(stateOpts) : null;
 
@@ -1850,12 +1844,20 @@ function createWindow() {
     width: windowState?.width || 1000,
     height: windowState?.height || 720,
     show: false,
-    icon: path.join(__dirname, "build", "icon.icns"),
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : (process.platform === "win32" ? "hidden" : "default"),
+    icon: path.join(__dirname, "..", "..", "build", "icon.icns"),
+    titleBarStyle:
+      process.platform === "darwin"
+        ? "hiddenInset"
+        : process.platform === "win32"
+          ? "hidden"
+          : "default",
     trafficLightPosition: process.platform === "darwin" ? { x: 14, y: 14 } : undefined,
-    titleBarOverlay: process.platform === "win32" ? { color: "#f0f0f0", symbolColor: "#333", height: 38 } : undefined,
+    titleBarOverlay:
+      process.platform === "win32"
+        ? { color: "#f0f0f0", symbolColor: "#333", height: 38 }
+        : undefined,
     webPreferences: {
-      preload: path.join(__dirname, "build", "ts", "preload.js"),
+      preload: path.join(__dirname, "preload.js"),
       webviewTag: true,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1864,17 +1866,15 @@ function createWindow() {
   });
 
   if (windowState) windowState.manage(win);
-  win.loadFile("index.html");
+  win.loadFile(path.join(__dirname, "..", "..", "index.html"));
   win.once("ready-to-show", () => win.show());
 
-  // Block in-window navigation (markdown link clicks, etc.) — open in default browser instead
   win.webContents.on("will-navigate", (event, url) => {
     if (!url.startsWith("file://")) {
       event.preventDefault();
       if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     }
   });
-  // Block window.open and target=_blank — route to default browser
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: "deny" };
@@ -1885,7 +1885,6 @@ function createWindow() {
 
 app.setName("Mason");
 
-// Global error handlers
 process.on("uncaughtException", (err) => {
   console.error("[CRASH] Uncaught exception:", err.message, err.stack);
 });
@@ -1895,15 +1894,19 @@ process.on("unhandledRejection", (reason) => {
 
 app.whenReady().then(() => {
   if (process.platform === "darwin") {
-    const icon = nativeImage.createFromPath(path.join(__dirname, "build", "icon.icns"));
-    if (!icon.isEmpty()) app.dock.setIcon(icon);
+    const icon = nativeImage.createFromPath(path.join(__dirname, "..", "..", "build", "icon.icns"));
+    if (!icon.isEmpty()) app.dock?.setIcon(icon);
   }
-  // One-time normalization for the ai-dev-kit MCP entry so attribution flows
-  // through to warehouse query history without a manual reinstall.
-  try { migrateDevkitMcpEntry(); } catch (e) { console.error("[DEVKIT] migrate failed:", e.message); }
-  // Drop workspaces.json entries whose Databricks profile was removed
-  // outside Mason (manual edit of ~/.databrickscfg, etc.).
-  try { gcOrphanedWorkspaceEntries(); } catch (e) { console.error("[WORKSPACE] GC failed:", e.message); }
+  try {
+    migrateDevkitMcpEntry();
+  } catch (e) {
+    console.error("[DEVKIT] migrate failed:", (e as Error).message);
+  }
+  try {
+    gcOrphanedWorkspaceEntries();
+  } catch (e) {
+    console.error("[WORKSPACE] GC failed:", (e as Error).message);
+  }
   createWindow();
 });
 
@@ -1915,7 +1918,6 @@ app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-// Cleanup: kill all stdio MCP processes on quit
 app.on("before-quit", () => {
   clearTokenCache();
   for (const [key, state] of Object.entries(stdioProcesses)) {

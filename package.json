@@ -3,7 +3,7 @@
   "version": "1.3.9",
   "description": "Desktop chat app for Databricks AI Gateway with MCP tool calling",
   "author": "Databricks",
-  "main": "main.js",
+  "main": "build/ts/main.js",
   "scripts": {
     "start": "npm run build:ts && electron .",
     "icon": "node scripts/build-icon.js",
@@ -35,10 +35,8 @@
       "output": "dist"
     },
     "files": [
-      "main.js",
       "build/ts/**/*",
       "index.html",
-      "js/**/*",
       "css/**/*",
       "icons/**/*",
       "build/icon.icns",
