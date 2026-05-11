@@ -1,4 +1,5 @@
-// Shared application state
+// Shared application state. Loaded as the first renderer script so every
+// other module sees `window.mason` (and the bare `mason` global) ready.
 window.mason = {
   // Auth & profiles
   profiles: [],
@@ -8,13 +9,11 @@ window.mason = {
   currentChatId: null,
   generating: false,
   chatAborted: false,
-  attachedFiles: [], // { name, ext, size, content } — cleared on send
+  attachedFiles: [],
 
-
-
-  // MCP servers: { type: "http"|"stdio", url?, key?, config?, serverInfo, tools[] }
+  // MCP servers
   mcpServers: [],
-  disabledTools: new Set(),
+  disabledTools: new Set<string>(),
 
   // Models
   discoveredModels: [],
@@ -30,7 +29,7 @@ window.mason = {
   systemPrompt: "",
 
   // UI
-  currentView: "chat", // "chat" | "dashboards" | "dashboard-detail"
+  currentView: "chat",
   dashboardsList: [],
   autoConnectDone: false,
 
