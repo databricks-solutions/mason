@@ -1,6 +1,23 @@
-// Tool definitions and filtering
+// Tool definitions and filtering.
 
-const BUILTIN_TOOLS = [
+interface McpToolDescriptor {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+}
+
+interface ToolDef {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: unknown;
+  };
+  _mcpServerUrl?: string;
+  _source?: string;
+}
+
+const BUILTIN_TOOLS: ToolDef[] = [
   {
     type: "function",
     function: {
@@ -20,7 +37,8 @@ const BUILTIN_TOOLS = [
     type: "function",
     function: {
       name: "read_file",
-      description: "Read content from a file on the user's local machine. Returns at most 256 KB per call. For larger files, use offset to read in chunks — the response will tell you the total size and where to read next.",
+      description:
+        "Read content from a file on the user's local machine. Returns at most 256 KB per call. For larger files, use offset to read in chunks — the response will tell you the total size and where to read next.",
       parameters: {
         type: "object",
         properties: {
@@ -35,10 +53,13 @@ const BUILTIN_TOOLS = [
 ];
 const BUILTIN_TOOL_NAMES = new Set(BUILTIN_TOOLS.map((t) => t.function.name));
 
-function getAllToolDefs() {
-  const tools = BUILTIN_TOOLS.filter((t) => !mason.disabledTools.has(t.function.name));
+function getAllToolDefs(): ToolDef[] {
+  const tools: ToolDef[] = BUILTIN_TOOLS.filter(
+    (t) => !mason.disabledTools.has(t.function.name)
+  );
   for (const server of mason.mcpServers) {
-    for (const tool of server.tools) {
+    const serverTools = (server.tools || []) as McpToolDescriptor[];
+    for (const tool of serverTools) {
       if (mason.disabledTools.has(tool.name)) continue;
       tools.push({
         type: "function",
@@ -54,11 +75,14 @@ function getAllToolDefs() {
   return tools;
 }
 
-function getAllToolDefsUnfiltered() {
-  const tools = [...BUILTIN_TOOLS.map((t) => ({ ...t, _source: "built-in" }))];
+function getAllToolDefsUnfiltered(): ToolDef[] {
+  const tools: ToolDef[] = [...BUILTIN_TOOLS.map((t) => ({ ...t, _source: "built-in" }))];
   for (const server of mason.mcpServers) {
-    const serverName = server.serverInfo.name || server.configName || (server.type === "stdio" ? "Local" : "Remote");
-    for (const tool of server.tools) {
+    const info = (server.serverInfo as { name?: string } | undefined) || {};
+    const serverName =
+      info.name || server.configName || (server.type === "stdio" ? "Local" : "Remote");
+    const serverTools = (server.tools || []) as McpToolDescriptor[];
+    for (const tool of serverTools) {
       tools.push({
         type: "function",
         function: {
@@ -73,16 +97,16 @@ function getAllToolDefsUnfiltered() {
   return tools;
 }
 
-function findMcpServerForTool(toolName) {
+function findMcpServerForTool(toolName: string): MasonMcpServer | null {
   for (const s of mason.mcpServers) {
-    if (s.tools.some((t) => t.name === toolName)) return s;
+    const serverTools = (s.tools || []) as McpToolDescriptor[];
+    if (serverTools.some((t) => t.name === toolName)) return s;
   }
   return null;
 }
 
-function maybeDisableTools(tools) {
+function maybeDisableTools(tools: McpToolDescriptor[]): void {
   if (!mason.autoLoadTools) {
     for (const t of tools) mason.disabledTools.add(t.name);
   }
 }
-
