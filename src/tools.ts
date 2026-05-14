@@ -55,22 +55,32 @@ const BUILTIN_TOOLS: ToolDef[] = [
     function: {
       name: "ask_user",
       description:
-        "Ask the user a clarifying question with 2-4 options before taking further steps. Use this when the request is ambiguous, a decision affects scope, or you'd otherwise guess. The user picks one (or several if multiSelect) and may add a free-text 'Other' response. Returns the chosen answer(s), or the string 'user_cancelled' if dismissed.",
+        "Ask the user one or more clarifying questions before taking further steps. Use this when the request is ambiguous, a decision affects scope, or you'd otherwise guess. Pass an array of 1-4 questions — the user steps through them in a single card and your tool result returns all answers as a JSON object keyed by question. Each question shows 2-4 options plus an automatic 'Other' free-text. If the user cancels at any point, the result is the literal string 'user_cancelled'. Prefer batching related clarifying questions in one call instead of calling ask_user multiple times in a row.",
       parameters: {
         type: "object",
         properties: {
-          question: { type: "string", description: "The full question to ask, ending with a question mark." },
-          options: {
+          questions: {
             type: "array",
-            items: { type: "string" },
-            description: "2-4 distinct option strings. An 'Other' free-text option is added automatically; don't include it here.",
-          },
-          multiSelect: {
-            type: "boolean",
-            description: "If true, the user can pick multiple options. Default false.",
+            description: "1-4 questions to ask in sequence.",
+            items: {
+              type: "object",
+              properties: {
+                question: { type: "string", description: "The question text, ending with a question mark." },
+                options: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "2-4 distinct option strings. An 'Other' free-text option is added automatically; don't include it here.",
+                },
+                multiSelect: {
+                  type: "boolean",
+                  description: "If true, the user can pick multiple options for this question. Default false.",
+                },
+              },
+              required: ["question", "options"],
+            },
           },
         },
-        required: ["question", "options"],
+        required: ["questions"],
       },
     },
   },

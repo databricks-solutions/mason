@@ -431,6 +431,22 @@
         padding-top: 6px; border-top: 1px solid #eee;
       }
       body.dark .question-answer-summary { border-top-color: #2a2a2a; }
+      .question-card-progress {
+        font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+        letter-spacing: 0.04em; opacity: 0.45;
+      }
+      .question-card-progress:empty { display: none; }
+      .question-answers-summary {
+        display: flex; flex-direction: column; gap: 4px;
+        padding-top: 6px; border-top: 1px solid #eee;
+        font-size: 0.78rem;
+      }
+      body.dark .question-answers-summary { border-top-color: #2a2a2a; }
+      .question-answers-summary-row {
+        display: flex; gap: 8px; align-items: baseline;
+      }
+      .question-answers-summary-row .qa-q { opacity: 0.55; flex: 1; }
+      .question-answers-summary-row .qa-a { font-weight: 500; }
 
       /* Thinking animation */
       .thinking {

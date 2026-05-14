@@ -90,50 +90,38 @@ function renderMessages(): void {
   }
 }
 
-// Renders an inline question card with options. Returns a Promise that resolves
-// with the selected answer(s) as a string, or "user_cancelled" if the user
-// dismisses it. Used by the ask_user built-in tool.
-function renderQuestionCard(
-  question: string,
-  options: string[],
-  multiSelect: boolean
-): Promise<string> {
+interface AskUserQuestion {
+  question: string;
+  options: string[];
+  multiSelect?: boolean;
+}
+
+// Renders an inline question card that walks the user through one or more
+// questions in sequence (single chat bubble — no round-trip to the model
+// between questions). Resolves with a JSON-stringified record of
+// { question: answer } pairs, or the literal "user_cancelled" if the user
+// cancels at any step.
+function renderQuestionCard(questions: AskUserQuestion[]): Promise<string> {
   return new Promise((resolve) => {
     removeThinking();
     clearWelcome();
     const messagesEl = mason.el.messages as HTMLElement | null;
-    if (!messagesEl) {
+    const list = (questions || []).slice(0, 4);
+    if (!messagesEl || list.length === 0) {
       resolve("user_cancelled");
       return;
     }
 
     const card = document.createElement("div");
     card.className = "msg question-card";
-
-    const safeOptions = (options || []).slice(0, 4);
-    const inputType = multiSelect ? "checkbox" : "radio";
-    const name = `q_${Date.now()}`;
-    const optionsHtml = safeOptions
-      .map(
-        (opt, i) => `
-          <label class="question-option">
-            <input type="${inputType}" name="${name}" value="${i}" />
-            <span>${renderMarkdown(opt).replace(/<\/?p>/g, "")}</span>
-          </label>`
-      )
-      .join("");
-
     card.innerHTML = `
-      <div class="question-card-prompt">${renderMarkdown(question)}</div>
-      <div class="question-options">${optionsHtml}
-        <label class="question-option question-option-other">
-          <input type="${inputType}" name="${name}" value="other" />
-          <span>Other</span>
-        </label>
-      </div>
+      <div class="question-card-progress"></div>
+      <div class="question-card-prompt"></div>
+      <div class="question-options"></div>
       <div class="question-other-row" style="display:none;">
         <input class="question-other-input" type="text" placeholder="Type your answer…" />
       </div>
+      <div class="question-answers-summary" style="display:none;"></div>
       <div class="question-actions">
         <button class="modal-btn secondary question-cancel">Cancel</button>
         <button class="modal-btn primary question-submit" disabled>Submit</button>
@@ -142,54 +130,110 @@ function renderQuestionCard(
     messagesEl.appendChild(card);
     messagesEl.scrollTop = messagesEl.scrollHeight;
 
-    const submitBtn = card.querySelector(".question-submit") as HTMLButtonElement;
-    const cancelBtn = card.querySelector(".question-cancel") as HTMLButtonElement;
+    const progressEl = card.querySelector(".question-card-progress") as HTMLElement;
+    const promptEl = card.querySelector(".question-card-prompt") as HTMLElement;
+    const optionsEl = card.querySelector(".question-options") as HTMLElement;
     const otherRow = card.querySelector(".question-other-row") as HTMLElement;
     const otherInput = card.querySelector(".question-other-input") as HTMLInputElement;
-    const inputs = Array.from(card.querySelectorAll(`input[name="${name}"]`)) as HTMLInputElement[];
+    const summaryEl = card.querySelector(".question-answers-summary") as HTMLElement;
+    const submitBtn = card.querySelector(".question-submit") as HTMLButtonElement;
+    const cancelBtn = card.querySelector(".question-cancel") as HTMLButtonElement;
 
-    const updateState = (): void => {
-      const checked = inputs.filter((i) => i.checked);
-      const showOther = checked.some((i) => i.value === "other");
-      otherRow.style.display = showOther ? "" : "none";
-      const hasAnswer = checked.length > 0 && (!showOther || otherInput.value.trim().length > 0);
-      submitBtn.disabled = !hasAnswer;
+    const answers: Record<string, string> = {};
+    let idx = 0;
+
+    const renderQuestion = (): void => {
+      const q = list[idx];
+      const safeOptions = (q.options || []).slice(0, 4);
+      const inputType = q.multiSelect ? "checkbox" : "radio";
+      const name = `q_${Date.now()}_${idx}`;
+
+      progressEl.textContent = list.length > 1 ? `Question ${idx + 1} of ${list.length}` : "";
+      promptEl.innerHTML = renderMarkdown(q.question);
+
+      optionsEl.innerHTML =
+        safeOptions
+          .map(
+            (opt, i) => `
+              <label class="question-option">
+                <input type="${inputType}" name="${name}" value="${i}" />
+                <span>${renderMarkdown(opt).replace(/<\/?p>/g, "")}</span>
+              </label>`
+          )
+          .join("") +
+        `<label class="question-option question-option-other">
+           <input type="${inputType}" name="${name}" value="other" />
+           <span>Other</span>
+         </label>`;
+
+      otherInput.value = "";
+      otherRow.style.display = "none";
+      submitBtn.disabled = true;
+      submitBtn.textContent = idx < list.length - 1 ? "Next" : "Submit";
+
+      const inputs = Array.from(card.querySelectorAll(`input[name="${name}"]`)) as HTMLInputElement[];
+      const updateState = (): void => {
+        const checked = inputs.filter((i) => i.checked);
+        const showOther = checked.some((i) => i.value === "other");
+        otherRow.style.display = showOther ? "" : "none";
+        const hasAnswer = checked.length > 0 && (!showOther || otherInput.value.trim().length > 0);
+        submitBtn.disabled = !hasAnswer;
+      };
+      inputs.forEach((input) => input.addEventListener("change", updateState));
+      otherInput.oninput = updateState;
+
+      submitBtn.onclick = (): void => {
+        const chosen = inputs.filter((i) => i.checked);
+        const parts: string[] = [];
+        for (const input of chosen) {
+          if (input.value === "other") {
+            const txt = otherInput.value.trim();
+            if (txt) parts.push(txt);
+          } else {
+            const i = parseInt(input.value, 10);
+            if (!Number.isNaN(i) && safeOptions[i] !== undefined) parts.push(safeOptions[i]);
+          }
+        }
+        if (parts.length === 0) return;
+        answers[q.question] = parts.join("; ");
+
+        // Append a small "answered" line above the current question so the
+        // user can see what they've picked so far.
+        summaryEl.style.display = "";
+        const row = document.createElement("div");
+        row.className = "question-answers-summary-row";
+        row.innerHTML = `<span class="qa-q">${renderMarkdown(q.question).replace(/<\/?p>/g, "")}</span><span class="qa-a">${parts.join("; ")}</span>`;
+        summaryEl.appendChild(row);
+
+        idx += 1;
+        if (idx < list.length) {
+          renderQuestion();
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        } else {
+          finish(JSON.stringify(answers));
+        }
+      };
     };
 
-    inputs.forEach((input) => input.addEventListener("change", updateState));
-    otherInput.addEventListener("input", updateState);
-
-    const finish = (answer: string): void => {
-      // Lock the card so the user can't double-submit; show their selection.
+    const finish = (result: string): void => {
       card.classList.add("question-card-answered");
-      inputs.forEach((i) => (i.disabled = true));
-      otherInput.disabled = true;
+      promptEl.style.display = "none";
+      optionsEl.style.display = "none";
+      otherRow.style.display = "none";
+      progressEl.style.display = "none";
       submitBtn.style.display = "none";
       cancelBtn.style.display = "none";
-      const summary = document.createElement("div");
-      summary.className = "question-answer-summary";
-      summary.textContent = `Answer: ${answer}`;
-      card.appendChild(summary);
-      resolve(answer);
+      if (result === "user_cancelled") {
+        const note = document.createElement("div");
+        note.className = "question-answer-summary";
+        note.textContent = "Cancelled.";
+        card.appendChild(note);
+      }
+      resolve(result);
     };
 
-    submitBtn.addEventListener("click", () => {
-      const chosen = inputs.filter((i) => i.checked);
-      const parts: string[] = [];
-      for (const input of chosen) {
-        if (input.value === "other") {
-          const txt = otherInput.value.trim();
-          if (txt) parts.push(txt);
-        } else {
-          const idx = parseInt(input.value, 10);
-          if (!Number.isNaN(idx) && safeOptions[idx] !== undefined) parts.push(safeOptions[idx]);
-        }
-      }
-      if (parts.length === 0) return;
-      finish(parts.join("; "));
-    });
-
     cancelBtn.addEventListener("click", () => finish("user_cancelled"));
+    renderQuestion();
   });
 }
 

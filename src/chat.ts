@@ -9,9 +9,7 @@ declare function addMessageEl(role: string, text: string): void;
 declare function showThinking(): void;
 declare function removeThinking(): void;
 declare function renderQuestionCard(
-  question: string,
-  options: string[],
-  multiSelect: boolean
+  questions: Array<{ question: string; options: string[]; multiSelect?: boolean }>
 ): Promise<string>;
 declare function clearWelcome(): void;
 declare function renderMarkdown(text: string): string;
@@ -321,10 +319,24 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
         // own UI inline.
         if (toolName === "ask_user") {
           try {
-            const q = (args.question as string) || "Please choose:";
-            const opts = (args.options as string[]) || [];
-            const multi = Boolean(args.multiSelect);
-            const answer = await renderQuestionCard(q, opts, multi);
+            // Accept the new batched shape ({ questions: [...] }) but stay
+            // compatible with a single-question call ({ question, options,
+            // multiSelect }) in case the model uses the legacy form.
+            let questions: Array<{ question: string; options: string[]; multiSelect?: boolean }>;
+            if (Array.isArray(args.questions)) {
+              questions = args.questions as any[];
+            } else if (typeof args.question === "string") {
+              questions = [
+                {
+                  question: args.question as string,
+                  options: (args.options as string[]) || [],
+                  multiSelect: Boolean(args.multiSelect),
+                },
+              ];
+            } else {
+              questions = [];
+            }
+            const answer = await renderQuestionCard(questions);
             (mason.history as any[]).push({
               role: "tool",
               tool_call_id: tc.id,
