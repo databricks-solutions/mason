@@ -8,6 +8,9 @@ declare function getGatewayUrl(): string | null;
 declare function addMessageEl(role: string, text: string): void;
 declare function showThinking(): void;
 declare function removeThinking(): void;
+declare function renderQuestionCard(
+  questions: Array<{ question: string; options: string[]; multiSelect?: boolean }>
+): Promise<string>;
 declare function clearWelcome(): void;
 declare function renderMarkdown(text: string): string;
 declare function renderAttachmentChips(): void;
@@ -310,6 +313,46 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
         try {
           args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
         } catch (_) {}
+
+        // Renderer-handled tools (ask_user, etc.) skip the IPC round-trip and
+        // also skip the "Calling tool: …" announcement since they render their
+        // own UI inline.
+        if (toolName === "ask_user") {
+          try {
+            // Accept the new batched shape ({ questions: [...] }) but stay
+            // compatible with a single-question call ({ question, options,
+            // multiSelect }) in case the model uses the legacy form.
+            let questions: Array<{ question: string; options: string[]; multiSelect?: boolean }>;
+            if (Array.isArray(args.questions)) {
+              questions = args.questions as any[];
+            } else if (typeof args.question === "string") {
+              questions = [
+                {
+                  question: args.question as string,
+                  options: (args.options as string[]) || [],
+                  multiSelect: Boolean(args.multiSelect),
+                },
+              ];
+            } else {
+              questions = [];
+            }
+            const answer = await renderQuestionCard(questions);
+            (mason.history as any[]).push({
+              role: "tool",
+              tool_call_id: tc.id,
+              name: toolName,
+              content: answer,
+            });
+          } catch (e) {
+            (mason.history as any[]).push({
+              role: "tool",
+              tool_call_id: tc.id,
+              name: toolName,
+              content: `Error: ${(e as Error).message}`,
+            });
+          }
+          continue;
+        }
 
         addMessageEl("tool-call", `Calling tool: ${toolName}`);
 

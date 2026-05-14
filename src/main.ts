@@ -124,6 +124,27 @@ function chatFetch(
   });
 }
 
+// Flatten a content field that might be a string, null, or an array of parts
+// (Gemini, some Anthropic responses, etc. return `content: [{type:"text", text:"..."}]`).
+// Without this, the renderer feeds an array to marked() and gets a confusing
+// "input parameter is of type [object Array], string expected" error.
+function flattenContent(c: any): string {
+  if (c == null) return "";
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) {
+    return c
+      .map((p) => {
+        if (typeof p === "string") return p;
+        if (p == null) return "";
+        if (typeof p.text === "string") return p.text;
+        if (typeof p.content === "string") return p.content;
+        return "";
+      })
+      .join("");
+  }
+  return String(c);
+}
+
 function sanitizeLog(str: string): string {
   return str
     .replace(/Bearer [^\s"]+/g, "Bearer ****")
@@ -1706,7 +1727,7 @@ ipcMain.handle(
         const toolNames = tools.map((t: any) => t.function.name).join(", ");
         const systemMsg = {
           role: "system",
-          content: `You have access to the following tools and MUST use them when the user asks for data they can provide: ${toolNames}. Always call the appropriate tool rather than saying you don't have access.`,
+          content: `You have access to the following tools and MUST use them when the user asks for data they can provide: ${toolNames}. Always call the appropriate tool rather than saying you don't have access. If the user's request is ambiguous or a key decision would affect scope, prefer calling ask_user with 2-4 options instead of guessing.`,
         };
         const hasSystem = messages.some((m: any) => m.role === "system");
         body = {
@@ -1801,7 +1822,7 @@ ipcMain.handle(
       if (toolCalls.length > 0) {
         return { type: "tool_calls", content: textContent || null, tool_calls: toolCalls };
       }
-      return { type: "text", content: textContent || JSON.stringify(data) };
+      return { type: "text", content: flattenContent(textContent) || JSON.stringify(data) };
     }
 
     const choice = data.choices[0];
@@ -1810,11 +1831,11 @@ ipcMain.handle(
       return {
         type: "tool_calls",
         tool_calls: choice.message.tool_calls,
-        content: choice.message.content || "",
+        content: flattenContent(choice.message.content),
       };
     }
 
-    return { type: "text", content: choice.message.content };
+    return { type: "text", content: flattenContent(choice.message.content) };
   }
 );
 
