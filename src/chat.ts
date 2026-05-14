@@ -8,6 +8,11 @@ declare function getGatewayUrl(): string | null;
 declare function addMessageEl(role: string, text: string): void;
 declare function showThinking(): void;
 declare function removeThinking(): void;
+declare function renderQuestionCard(
+  question: string,
+  options: string[],
+  multiSelect: boolean
+): Promise<string>;
 declare function clearWelcome(): void;
 declare function renderMarkdown(text: string): string;
 declare function renderAttachmentChips(): void;
@@ -310,6 +315,32 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
         try {
           args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
         } catch (_) {}
+
+        // Renderer-handled tools (ask_user, etc.) skip the IPC round-trip and
+        // also skip the "Calling tool: …" announcement since they render their
+        // own UI inline.
+        if (toolName === "ask_user") {
+          try {
+            const q = (args.question as string) || "Please choose:";
+            const opts = (args.options as string[]) || [];
+            const multi = Boolean(args.multiSelect);
+            const answer = await renderQuestionCard(q, opts, multi);
+            (mason.history as any[]).push({
+              role: "tool",
+              tool_call_id: tc.id,
+              name: toolName,
+              content: answer,
+            });
+          } catch (e) {
+            (mason.history as any[]).push({
+              role: "tool",
+              tool_call_id: tc.id,
+              name: toolName,
+              content: `Error: ${(e as Error).message}`,
+            });
+          }
+          continue;
+        }
 
         addMessageEl("tool-call", `Calling tool: ${toolName}`);
 

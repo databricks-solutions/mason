@@ -50,8 +50,35 @@ const BUILTIN_TOOLS: ToolDef[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "ask_user",
+      description:
+        "Ask the user a clarifying question with 2-4 options before taking further steps. Use this when the request is ambiguous, a decision affects scope, or you'd otherwise guess. The user picks one (or several if multiSelect) and may add a free-text 'Other' response. Returns the chosen answer(s), or the string 'user_cancelled' if dismissed.",
+      parameters: {
+        type: "object",
+        properties: {
+          question: { type: "string", description: "The full question to ask, ending with a question mark." },
+          options: {
+            type: "array",
+            items: { type: "string" },
+            description: "2-4 distinct option strings. An 'Other' free-text option is added automatically; don't include it here.",
+          },
+          multiSelect: {
+            type: "boolean",
+            description: "If true, the user can pick multiple options. Default false.",
+          },
+        },
+        required: ["question", "options"],
+      },
+    },
+  },
 ];
 const BUILTIN_TOOL_NAMES = new Set(BUILTIN_TOOLS.map((t) => t.function.name));
+// Tools handled entirely in the renderer (no IPC round-trip). chatLoop dispatches
+// these inline so they can render UI and await user input.
+const RENDERER_BUILTIN_TOOL_NAMES = new Set(["ask_user"]);
 
 function getAllToolDefs(): ToolDef[] {
   const tools: ToolDef[] = BUILTIN_TOOLS.filter(

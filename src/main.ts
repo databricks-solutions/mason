@@ -1706,7 +1706,7 @@ ipcMain.handle(
         const toolNames = tools.map((t: any) => t.function.name).join(", ");
         const systemMsg = {
           role: "system",
-          content: `You have access to the following tools and MUST use them when the user asks for data they can provide: ${toolNames}. Always call the appropriate tool rather than saying you don't have access.`,
+          content: `You have access to the following tools and MUST use them when the user asks for data they can provide: ${toolNames}. Always call the appropriate tool rather than saying you don't have access. If the user's request is ambiguous or a key decision would affect scope, prefer calling ask_user with 2-4 options instead of guessing.`,
         };
         const hasSystem = messages.some((m: any) => m.role === "system");
         body = {
