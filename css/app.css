@@ -392,7 +392,7 @@
         max-width: 720px;
         background: #fff;
         border: 1px solid #d8dde6;
-        border-left: 3px solid #007aff;
+        border-left: 3px solid #ff3621;
         border-radius: 8px;
         padding: 14px 16px;
         margin: 6px 0;
@@ -401,7 +401,7 @@
         gap: 10px;
         font-size: 0.9rem;
       }
-      body.dark .msg.question-card { background: #1a1a1f; border-color: #2f3540; border-left-color: #4a9eff; }
+      body.dark .msg.question-card { background: #1a1a1f; border-color: #2f3540; border-left-color: #ff3621; }
       .question-card-prompt { font-weight: 500; line-height: 1.45; }
       .question-card-prompt p { margin: 0 0 6px; }
       .question-card-prompt p:last-child { margin-bottom: 0; }
@@ -411,8 +411,8 @@
         padding: 6px 8px; border-radius: 6px; cursor: pointer;
         transition: background 0.12s;
       }
-      .question-option:hover { background: rgba(0,122,255,0.06); }
-      body.dark .question-option:hover { background: rgba(74,158,255,0.1); }
+      .question-option:hover { background: rgba(255,54,33,0.06); }
+      body.dark .question-option:hover { background: rgba(255,54,33,0.12); }
       .question-option input { margin-top: 3px; flex-shrink: 0; cursor: pointer; }
       .question-option span { line-height: 1.4; }
       .question-option-other { font-style: italic; opacity: 0.85; }
@@ -421,7 +421,7 @@
         border: 1px solid #ccc; font-size: 0.88rem; font-family: inherit;
         outline: none; transition: border-color 0.15s;
       }
-      .question-other-input:focus { border-color: #007aff; }
+      .question-other-input:focus { border-color: #ff3621; }
       body.dark .question-other-input { background: #222; border-color: #3a3a3a; color: #ddd; }
       .question-actions { display: flex; gap: 8px; justify-content: flex-end; }
       .question-card-answered { opacity: 0.85; }
