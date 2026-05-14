@@ -187,7 +187,10 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
       }
     }
 
-    const canStream = !toolsForApi;
+    // Stream chat completions regardless of tools — main.ts accumulates
+    // tool_calls deltas now. Responses API stream format differs; keep it
+    // non-streamed there.
+    const canStream = chatFormat !== "responses";
     let streamingEl: HTMLElement | null = null;
     let streamedText = "";
     let typeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -300,7 +303,21 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
     }
 
     if (result.type === "tool_calls") {
-      if (result.content) addMessageEl("assistant", result.content);
+      // If the assistant preamble was streamed live, finalize the bubble
+      // with markdown rendering. If it was streamed but empty, remove the
+      // empty bubble. If we didn't stream at all (Responses path),
+      // create a normal message.
+      const streamed = streamingEl as HTMLElement | null;
+      if (streamed) {
+        if (result.content) {
+          streamed.style.whiteSpace = "";
+          streamed.innerHTML = renderMarkdown(result.content);
+        } else {
+          streamed.remove();
+        }
+      } else if (result.content) {
+        addMessageEl("assistant", result.content);
+      }
       (mason.history as any[]).push({
         role: "assistant",
         content: result.content || null,

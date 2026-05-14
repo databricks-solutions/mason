@@ -1649,7 +1649,11 @@ ipcMain.handle(
     let effectiveGateway = gateway;
     effectiveGateway = effectiveGateway.replace(/\/(mlflow|openai)\/v1\/.+$/, "");
     const isResponses = format === "responses";
-    const shouldStream = stream && !isResponses && !(tools && tools.length > 0);
+    // Stream chat completions regardless of whether tools are attached.
+    // We accumulate tool_calls deltas below and synthesize the result.
+    // Responses API has a different streaming format we don't speak, so
+    // we keep that path non-streamed.
+    const shouldStream = stream && !isResponses;
     console.log(
       `[CHAT] model=${model}, gateway=${effectiveGateway}, format=${isResponses ? "responses" : "chat"}, stream=${shouldStream}, messages=${messages.length}, tools=${tools ? tools.length : 0}`
     );
@@ -1771,6 +1775,16 @@ ipcMain.handle(
     if (shouldStream) {
       const win = BrowserWindow.getAllWindows()[0];
       let fullContent = "";
+      // OpenAI/Anthropic chat-completions tool_calls arrive as deltas keyed
+      // by index. First delta carries id+name+(maybe partial args); later
+      // deltas carry arguments string chunks. We accumulate per-index, then
+      // synthesize the chat-completions tool_calls[] shape at the end so the
+      // existing renderer loop stays unchanged.
+      const toolCallsAccum: Array<{
+        id: string;
+        type: string;
+        function: { name: string; arguments: string };
+      }> = [];
       const reader = (res.body as any).getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -1794,8 +1808,37 @@ ipcMain.handle(
               fullContent += delta.content;
               if (win) win.webContents.send("chat-chunk", delta.content);
             }
+            if (Array.isArray(delta?.tool_calls)) {
+              for (const tc of delta.tool_calls) {
+                const idx = typeof tc.index === "number" ? tc.index : 0;
+                if (!toolCallsAccum[idx]) {
+                  toolCallsAccum[idx] = {
+                    id: "",
+                    type: "function",
+                    function: { name: "", arguments: "" },
+                  };
+                }
+                const slot = toolCallsAccum[idx];
+                if (tc.id) slot.id = tc.id;
+                if (tc.type) slot.type = tc.type;
+                if (tc.function?.name) slot.function.name = tc.function.name;
+                if (typeof tc.function?.arguments === "string") {
+                  slot.function.arguments += tc.function.arguments;
+                }
+              }
+            }
           } catch (_) {}
         }
+      }
+      // Compact (in case the stream skipped an index) and decide the response shape.
+      const toolCalls = toolCallsAccum.filter((tc) => tc && tc.function?.name);
+      if (toolCalls.length > 0) {
+        return {
+          type: "tool_calls",
+          tool_calls: toolCalls,
+          content: flattenContent(fullContent),
+          streamed: true,
+        };
       }
       return { type: "text", content: fullContent, streamed: true };
     }
