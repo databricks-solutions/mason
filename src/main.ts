@@ -1308,8 +1308,23 @@ const IMAGE_MIME: Record<string, string> = {
   gif: "image/gif",
   webp: "image/webp",
 };
-// @ts-ignore — pdf-parse has no @types
-const { PDFParse } = require("pdf-parse");
+// pdf-parse is loaded lazily inside the PDF branch below. Eager require fails
+// on Windows because the bundled pdf.js calls DOMMatrix during module init,
+// which doesn't exist in Electron's main-process Node context on Windows.
+// Lazy-loading keeps startup clean; PDF uploads on platforms where the load
+// fails return a friendly error instead of crashing the whole app.
+let _PDFParse: any = undefined;
+function loadPDFParse(): any {
+  if (_PDFParse !== undefined) return _PDFParse;
+  try {
+    // @ts-ignore — pdf-parse has no @types
+    _PDFParse = require("pdf-parse").PDFParse;
+  } catch (err) {
+    console.error("[UPLOAD] pdf-parse failed to load:", (err as Error).message);
+    _PDFParse = null;
+  }
+  return _PDFParse;
+}
 
 ipcMain.handle("read-file-for-upload", async (_event: IpcMainInvokeEvent, { filePath }: { filePath: string }) => {
   if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
@@ -1335,6 +1350,12 @@ ipcMain.handle("read-file-for-upload", async (_event: IpcMainInvokeEvent, { file
       throw new Error(
         `PDF too large (${(stats.size / 1024 / 1024).toFixed(1)} MB > ${MAX_PDF_BYTES / 1024 / 1024} MB)`
       );
+    const PDFParse = loadPDFParse();
+    if (!PDFParse) {
+      throw new Error(
+        "PDF support isn't available on this build. Convert the PDF to text or paste its content directly into the chat."
+      );
+    }
     const buf = fs.readFileSync(filePath);
     const parser = new PDFParse({ data: buf });
     let result: any;
