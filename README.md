@@ -24,9 +24,32 @@ curl -fsSL https://raw.githubusercontent.com/databricks-solutions/mason/main/scr
 
 Download `Mason-*-arm64.dmg` from [the latest release](https://github.com/databricks-solutions/mason/releases/latest), open it, and drag Mason to Applications.
 
-### Other platforms
+### Windows (x64 or ARM64) — one-line install
 
-Windows and Linux builds are not yet published. The `electron-builder` config supports them — building from source on those platforms (`npm ci && npm run build:win` / `npm run build:linux`) will produce installers.
+Open PowerShell and run:
+
+```powershell
+irm https://raw.githubusercontent.com/databricks-solutions/mason/main/scripts/install.ps1 | iex
+```
+
+This auto-detects your architecture (x64 vs ARM64), downloads the matching installer from GitHub Releases, and runs it silently as a per-user install (no admin elevation). Mason launches automatically when it finishes. Pin to a specific version:
+
+```powershell
+$env:MASON_VERSION = "v1.3.13"; irm https://raw.githubusercontent.com/databricks-solutions/mason/main/scripts/install.ps1 | iex
+```
+
+### Windows — manual install
+
+Download the matching `.exe` from [the latest release](https://github.com/databricks-solutions/mason/releases/latest) and run it:
+
+- `Mason Setup X.Y.Z.exe` — x64 (Intel / AMD)
+- `Mason Setup X.Y.Z-arm64.exe` — ARM64 (Surface Pro X, Copilot+ PCs)
+
+Not sure which architecture you have? Settings → System → About → "System type".
+
+### Linux
+
+Linux builds aren't published yet. Build from source: `npm ci && npm run build:linux` produces an `.AppImage`.
 
 ## How to get help
 

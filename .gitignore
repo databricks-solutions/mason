@@ -114,6 +114,7 @@ build/ts/
 .claude/
 CLAUDE.md
 TYPESCRIPT_MIGRATION.md
+Makefile
 # ai-dev-kit MCP writes these into its working directory (Mason repo root when
 # spawned from Mason). They're per-machine resource ledgers — never commit.
 .databricks-resources.json
