@@ -8,6 +8,9 @@ declare function updateToggleVisual(): void;
 declare function populateDefaultModelSelect(): void;
 declare function renderEndpointsList(): void;
 declare function renderProfilesList(): void;
+declare function refreshSkillsState(): Promise<void>;
+declare function renderSkillsSettingsList(): void;
+declare function updateSkillsAutoLoadVisual(): void;
 
 function elAs<T extends HTMLElement>(key: string): T | null {
   return mason.el[key] as T | null;
@@ -80,6 +83,11 @@ function switchToSettingsView(): void {
   if (settingsClose) settingsClose.style.display = "inline-block";
   elAs<HTMLElement>("onboardingView")?.classList.remove("visible");
   if (typeof renderProfilesList === "function") renderProfilesList();
+  if (typeof refreshSkillsState === "function") {
+    refreshSkillsState().then(() => {
+      if (typeof renderSkillsSettingsList === "function") renderSkillsSettingsList();
+    });
+  }
 }
 
 function openDashboard(dashboard: MasonDashboard): void {

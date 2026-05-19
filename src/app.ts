@@ -122,6 +122,22 @@ function initDomRefs(): void {
     defaultModelSelect: "defaultModelSelect",
     attachmentChips: "attachmentChips",
     endpointAdd: "endpointAdd",
+    skillsModal: "skillsModal",
+    skillsModalList: "skillsModalList",
+    skillsModalClose: "skillsModalClose",
+    skillsSettingsList: "skillsSettingsList",
+    skillsNewBtn: "skillsNewBtn",
+    skillEditorModal: "skillEditorModal",
+    skillEditorTitle: "skillEditorTitle",
+    skillEditorName: "skillEditorName",
+    skillEditorDescription: "skillEditorDescription",
+    skillEditorBody: "skillEditorBody",
+    skillEditorError: "skillEditorError",
+    skillEditorSave: "skillEditorSave",
+    skillEditorCancel: "skillEditorCancel",
+    autoLoadSkillsToggle: "autoLoadSkillsToggle",
+    autoLoadSkillsTrack: "autoLoadSkillsTrack",
+    autoLoadSkillsThumb: "autoLoadSkillsThumb",
   };
   const refs: Record<string, HTMLElement | null> = {};
   for (const [key, id] of Object.entries(lookup)) {
@@ -412,6 +428,221 @@ function renderToolsModal(): void {
   }
 }
 
+// --- Skills ---
+
+async function refreshSkillsState(): Promise<void> {
+  try {
+    const [skills, cfg] = await Promise.all([
+      window.api.skillsList(),
+      window.api.skillsConfigLoad(),
+    ]);
+    mason.skills = (skills as MasonSkillSummary[]) || [];
+    mason.disabledSkills = new Set(cfg.disabledSkills || []);
+    mason.autoLoadSkills = cfg.autoLoadSkills !== false;
+    updateSkillsAutoLoadVisual();
+  } catch (e) {
+    console.error("[SKILLS] refresh failed:", (e as Error).message);
+  }
+}
+
+function updateSkillsAutoLoadVisual(): void {
+  const track = mason.el.autoLoadSkillsTrack as HTMLElement | null;
+  const thumb = mason.el.autoLoadSkillsThumb as HTMLElement | null;
+  const toggle = mason.el.autoLoadSkillsToggle as HTMLInputElement | null;
+  if (toggle) toggle.checked = mason.autoLoadSkills;
+  if (track) track.style.background = mason.autoLoadSkills ? "#4caf50" : "#ccc";
+  if (thumb) thumb.style.transform = mason.autoLoadSkills ? "translateX(20px)" : "translateX(0)";
+}
+
+function renderSkillsModal(): void {
+  const list = mason.el.skillsModalList as HTMLElement | null;
+  if (!list) return;
+  list.innerHTML = "";
+
+  if (mason.skills.length === 0) {
+    list.innerHTML =
+      '<div style="opacity:0.5;font-size:0.85rem;padding:8px;">No skills available. Create one in Settings → Skills, or install ai-dev-kit for bundled skills.</div>';
+    return;
+  }
+
+  const enabledCount = mason.skills.filter((s) => !mason.disabledSkills.has(s.slug)).length;
+  const counter = document.createElement("div");
+  counter.style.cssText = "font-size:0.78rem;opacity:0.5;margin-bottom:8px;";
+  counter.textContent = `${enabledCount} of ${mason.skills.length} skills enabled`;
+  list.appendChild(counter);
+
+  const groups: Record<MasonSkillSource, MasonSkillSummary[]> = { user: [], "ai-dev-kit": [] };
+  for (const s of mason.skills) groups[s.source].push(s);
+
+  const labels: Record<MasonSkillSource, string> = { user: "User", "ai-dev-kit": "ai-dev-kit" };
+  for (const source of ["user", "ai-dev-kit"] as MasonSkillSource[]) {
+    const items = groups[source];
+    if (items.length === 0) continue;
+    const header = document.createElement("div");
+    header.style.cssText =
+      "font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;opacity:0.45;padding:8px 4px 4px;";
+    header.textContent = `${labels[source]} (${items.length})`;
+    list.appendChild(header);
+
+    for (const s of items) {
+      const enabled = !mason.disabledSkills.has(s.slug);
+      const row = document.createElement("div");
+      row.style.cssText = `display:flex;align-items:flex-start;gap:8px;padding:6px 4px 6px 12px;opacity:${enabled ? "1" : "0.4"};`;
+      row.innerHTML = `
+        <input type="checkbox" ${enabled ? "checked" : ""} style="cursor:pointer;margin-top:3px;flex-shrink:0;" />
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:500;font-size:0.85rem;">${escapeHtml(s.name)}</div>
+          <div style="opacity:0.6;font-size:0.76rem;line-height:1.35;">${escapeHtml(s.description || "")}</div>
+        </div>
+      `;
+      const cb = row.querySelector("input") as HTMLInputElement;
+      cb.addEventListener("change", async () => {
+        if (cb.checked) mason.disabledSkills.delete(s.slug);
+        else mason.disabledSkills.add(s.slug);
+        await window.api.skillsConfigSave({ disabledSkills: Array.from(mason.disabledSkills) });
+        renderSkillsModal();
+      });
+      list.appendChild(row);
+    }
+  }
+}
+
+function renderSkillsSettingsList(): void {
+  const list = mason.el.skillsSettingsList as HTMLElement | null;
+  if (!list) return;
+  list.innerHTML = "";
+
+  if (mason.skills.length === 0) {
+    list.innerHTML =
+      '<div style="opacity:0.5;font-size:0.82rem;padding:6px 0;">No skills yet — click + New Skill to create one.</div>';
+    return;
+  }
+
+  for (const s of mason.skills) {
+    const enabled = !mason.disabledSkills.has(s.slug);
+    const div = document.createElement("div");
+    div.className = "mcp-server-item";
+    const sourceTag = s.source === "ai-dev-kit" ? "ai-dev-kit" : "user";
+    const userActionsHtml =
+      s.source === "user"
+        ? `<button class="mcp-server-remove" data-act="edit" data-slug="${escapeHtml(s.slug)}" title="Edit" style="margin-right:4px;">&#9998;</button>
+           <button class="mcp-server-remove" data-act="delete" data-slug="${escapeHtml(s.slug)}" title="Remove">&times;</button>`
+        : "";
+    div.innerHTML = `
+      <div class="mcp-server-item-info">
+        <input type="checkbox" ${enabled ? "checked" : ""} style="cursor:pointer;flex-shrink:0;" />
+        <span class="mcp-server-item-name">${escapeHtml(s.name)}</span>
+        <span class="mcp-server-item-tools">${sourceTag} &middot; ${escapeHtml(s.description || "")}</span>
+      </div>
+      <div style="display:flex;align-items:center;">${userActionsHtml}</div>
+    `;
+    const cb = div.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    cb.addEventListener("change", async () => {
+      if (cb.checked) mason.disabledSkills.delete(s.slug);
+      else mason.disabledSkills.add(s.slug);
+      await window.api.skillsConfigSave({ disabledSkills: Array.from(mason.disabledSkills) });
+      renderSkillsSettingsList();
+    });
+    const editBtn = div.querySelector('[data-act="edit"]') as HTMLButtonElement | null;
+    editBtn?.addEventListener("click", () => openSkillEditor(s.slug));
+    const delBtn = div.querySelector('[data-act="delete"]') as HTMLButtonElement | null;
+    delBtn?.addEventListener("click", async () => {
+      if (!confirm(`Delete the skill "${s.name}"? This removes ~/.mason/skills/${s.slug}/.`)) return;
+      await window.api.skillsDelete(s.slug);
+      await refreshSkillsState();
+      renderSkillsSettingsList();
+    });
+    list.appendChild(div);
+  }
+}
+
+let editingSkillSlug: string | null = null;
+
+async function openSkillEditor(slug?: string): Promise<void> {
+  const modal = mason.el.skillEditorModal as HTMLElement | null;
+  const title = mason.el.skillEditorTitle as HTMLElement | null;
+  const nameInput = mason.el.skillEditorName as HTMLInputElement | null;
+  const descInput = mason.el.skillEditorDescription as HTMLInputElement | null;
+  const bodyInput = mason.el.skillEditorBody as HTMLTextAreaElement | null;
+  const errEl = mason.el.skillEditorError as HTMLElement | null;
+  if (!modal || !nameInput || !descInput || !bodyInput) return;
+
+  editingSkillSlug = slug || null;
+  if (errEl) {
+    errEl.style.display = "none";
+    errEl.textContent = "";
+  }
+
+  if (slug) {
+    const skill = (await window.api.skillsLoad(slug)) as
+      | { slug: string; name: string; description: string; body: string }
+      | null;
+    if (!skill) {
+      alert("Could not load skill.");
+      return;
+    }
+    if (title) title.textContent = `Edit Skill — ${skill.name}`;
+    nameInput.value = skill.name;
+    descInput.value = skill.description;
+    bodyInput.value = skill.body;
+  } else {
+    if (title) title.textContent = "New Skill";
+    nameInput.value = "";
+    descInput.value = "";
+    bodyInput.value = "";
+  }
+  modal.classList.add("open");
+  nameInput.focus();
+}
+
+function closeSkillEditor(): void {
+  const modal = mason.el.skillEditorModal as HTMLElement | null;
+  modal?.classList.remove("open");
+  editingSkillSlug = null;
+}
+
+async function saveSkillEditor(): Promise<void> {
+  const nameInput = mason.el.skillEditorName as HTMLInputElement | null;
+  const descInput = mason.el.skillEditorDescription as HTMLInputElement | null;
+  const bodyInput = mason.el.skillEditorBody as HTMLTextAreaElement | null;
+  const errEl = mason.el.skillEditorError as HTMLElement | null;
+  if (!nameInput || !descInput || !bodyInput) return;
+
+  const name = nameInput.value.trim();
+  const description = descInput.value.trim();
+  const body = bodyInput.value;
+  if (!name) {
+    if (errEl) {
+      errEl.style.display = "";
+      errEl.textContent = "Name is required.";
+    }
+    return;
+  }
+  if (!body.trim()) {
+    if (errEl) {
+      errEl.style.display = "";
+      errEl.textContent = "Body is required.";
+    }
+    return;
+  }
+  try {
+    await window.api.skillsSave({
+      name,
+      description,
+      body,
+      slug: editingSkillSlug || undefined,
+    });
+    closeSkillEditor();
+    await refreshSkillsState();
+    renderSkillsSettingsList();
+  } catch (e) {
+    if (errEl) {
+      errEl.style.display = "";
+      errEl.textContent = (e as Error).message || "Save failed.";
+    }
+  }
+}
+
 // --- Wire up all event listeners ---
 
 function initEventListeners(): void {
@@ -578,6 +809,38 @@ function initEventListeners(): void {
   );
   toolsModal?.addEventListener("click", (e) => {
     if (e.target === toolsModal) toolsModal.classList.remove("open");
+  });
+
+  // Skills modal — toggle which skills the LLM sees in <available_skills>
+  const skillsModal = el.skillsModal as HTMLElement | null;
+  document.getElementById("menuSkills")?.addEventListener("click", async () => {
+    popup?.classList.remove("open");
+    await refreshSkillsState();
+    renderSkillsModal();
+    skillsModal?.classList.add("open");
+  });
+  (el.skillsModalClose as HTMLElement | null)?.addEventListener("click", () =>
+    skillsModal?.classList.remove("open")
+  );
+  skillsModal?.addEventListener("click", (e) => {
+    if (e.target === skillsModal) skillsModal.classList.remove("open");
+  });
+
+  // Skill editor modal (create/edit)
+  const skillEditorModal = el.skillEditorModal as HTMLElement | null;
+  (el.skillsNewBtn as HTMLElement | null)?.addEventListener("click", () => openSkillEditor());
+  (el.skillEditorCancel as HTMLElement | null)?.addEventListener("click", () => closeSkillEditor());
+  (el.skillEditorSave as HTMLElement | null)?.addEventListener("click", () => saveSkillEditor());
+  skillEditorModal?.addEventListener("click", (e) => {
+    if (e.target === skillEditorModal) closeSkillEditor();
+  });
+
+  // Auto-load skills toggle
+  const autoLoadSkillsToggle = el.autoLoadSkillsToggle as HTMLInputElement | null;
+  autoLoadSkillsToggle?.addEventListener("change", async () => {
+    mason.autoLoadSkills = autoLoadSkillsToggle.checked;
+    updateSkillsAutoLoadVisual();
+    await window.api.skillsConfigSave({ autoLoadSkills: mason.autoLoadSkills });
   });
 
   // Upload Files
@@ -1031,6 +1294,8 @@ function initEventListeners(): void {
       modelMenu?.classList.remove("open");
       toolsModal?.classList.remove("open");
       mcpModal?.classList.remove("open");
+      skillsModal?.classList.remove("open");
+      skillEditorModal?.classList.remove("open");
       if (mason.currentView === "settings") switchToChatsTab();
     }
   });
@@ -1074,6 +1339,9 @@ async function initApp(): Promise<void> {
 
   initEventListeners();
   initDashboardListener();
+
+  // Skills are independent of profile/workspace state — load once at startup.
+  await refreshSkillsState();
 
   await loadProfiles();
 

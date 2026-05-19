@@ -84,11 +84,29 @@ const BUILTIN_TOOLS: ToolDef[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "load_skill",
+      description:
+        "Load the full instructions for a skill named in <available_skills>. Call this when the user's request matches a skill's description — you'll receive the skill's full markdown body, which you should then follow precisely. Pass the skill's slug (the value of <name> in the manifest).",
+      parameters: {
+        type: "object",
+        properties: {
+          slug: {
+            type: "string",
+            description: "The skill slug from <available_skills> (e.g. 'dcf-analysis').",
+          },
+        },
+        required: ["slug"],
+      },
+    },
+  },
 ];
 const BUILTIN_TOOL_NAMES = new Set(BUILTIN_TOOLS.map((t) => t.function.name));
 // Tools handled entirely in the renderer (no IPC round-trip). chatLoop dispatches
 // these inline so they can render UI and await user input.
-const RENDERER_BUILTIN_TOOL_NAMES = new Set(["ask_user"]);
+const RENDERER_BUILTIN_TOOL_NAMES = new Set(["ask_user", "load_skill"]);
 
 function getAllToolDefs(): ToolDef[] {
   const tools: ToolDef[] = BUILTIN_TOOLS.filter(

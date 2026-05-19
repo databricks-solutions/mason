@@ -178,6 +178,30 @@ export interface InstallDevkitParams {
   profile?: string;
 }
 
+export type SkillSource = "user" | "ai-dev-kit";
+
+export interface MasonSkillSummary {
+  name: string;
+  description: string;
+  source: SkillSource;
+  slug: string;
+  path: string;
+}
+
+export interface MasonSkillSaveParams {
+  name: string;
+  description: string;
+  body: string;
+  // If slug is provided it identifies the existing skill being updated.
+  // Otherwise a slug is derived from name.
+  slug?: string;
+}
+
+export interface MasonSkillsConfig {
+  disabledSkills: string[];
+  autoLoadSkills: boolean;
+}
+
 export interface MasonApi {
   // Streaming chat chunk listener
   onChatChunk(callback: (chunk: ChatChunk) => void): void;
@@ -263,4 +287,12 @@ export interface MasonApi {
   uninstallDevkit(): Promise<{ ok: boolean; error?: string }>;
   onDevkitInstallProgress(callback: (payload: DevkitInstallProgress) => void): void;
   removeDevkitInstallListeners(): void;
+
+  // Skills
+  skillsList(): Promise<MasonSkillSummary[]>;
+  skillsLoad(slug: string): Promise<{ slug: string; name: string; description: string; body: string } | null>;
+  skillsSave(params: MasonSkillSaveParams): Promise<MasonSkillSummary>;
+  skillsDelete(slug: string): Promise<{ ok: boolean }>;
+  skillsConfigLoad(): Promise<MasonSkillsConfig>;
+  skillsConfigSave(partial: Partial<MasonSkillsConfig>): Promise<MasonSkillsConfig>;
 }

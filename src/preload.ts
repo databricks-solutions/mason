@@ -70,6 +70,13 @@ const api: MasonApi = {
   settingsLoad: () => ipcRenderer.invoke("settings-load"),
   settingsSave: (partial) => ipcRenderer.invoke("settings-save", partial),
 
+  skillsList: () => ipcRenderer.invoke("skills-list"),
+  skillsLoad: (slug) => ipcRenderer.invoke("skills-load", slug),
+  skillsSave: (params) => ipcRenderer.invoke("skills-save", params),
+  skillsDelete: (slug) => ipcRenderer.invoke("skills-delete", slug),
+  skillsConfigLoad: () => ipcRenderer.invoke("skills-config-load"),
+  skillsConfigSave: (partial) => ipcRenderer.invoke("skills-config-save", partial),
+
   detectDevkit: () => ipcRenderer.invoke("detect-devkit"),
   installDevkit: (params) => ipcRenderer.invoke("install-devkit", params),
   uninstallDevkit: () => ipcRenderer.invoke("uninstall-devkit"),

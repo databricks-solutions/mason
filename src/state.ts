@@ -33,6 +33,11 @@ window.mason = {
   dashboardsList: [],
   autoConnectDone: false,
 
+  // Skills
+  skills: [],
+  disabledSkills: new Set<string>(),
+  autoLoadSkills: true,
+
   // DOM refs (populated on init)
   el: {},
 };

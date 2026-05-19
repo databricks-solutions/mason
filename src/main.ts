@@ -22,6 +22,8 @@ const WORKSPACES_FILE = path.join(CONFIG_DIR, "workspaces.json");
 const MCP_SERVERS_FILE = path.join(CONFIG_DIR, "mcp_servers.json");
 const CLI_PATH_FILE = path.join(CONFIG_DIR, "cli_path.json");
 const SETTINGS_FILE = path.join(CONFIG_DIR, "settings.json");
+const SKILLS_FILE = path.join(CONFIG_DIR, "skills.json");
+const USER_SKILLS_DIR = path.join(MASON_HOME, "skills");
 const DATABRICKSCFG_PATH = path.join(os.homedir(), ".databrickscfg");
 const DEVKIT_DIR = path.join(os.homedir(), ".ai-dev-kit");
 const DEVKIT_REPO_DIR = path.join(DEVKIT_DIR, "repo");
@@ -62,6 +64,7 @@ if (!fs.existsSync(MASON_HOME)) fs.mkdirSync(MASON_HOME);
 if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR);
 if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR);
 if (!fs.existsSync(BIN_DIR)) fs.mkdirSync(BIN_DIR);
+if (!fs.existsSync(USER_SKILLS_DIR)) fs.mkdirSync(USER_SKILLS_DIR);
 
 // --- Databricks CLI resolution + install ---
 
@@ -750,6 +753,184 @@ ipcMain.handle("settings-load", () => readSettings());
 ipcMain.handle("settings-save", (_event: IpcMainInvokeEvent, partial: Partial<Settings>) => {
   const next = { ...readSettings(), ...partial };
   writeSettings(next);
+  return next;
+});
+
+// --- Skills ---
+//
+// Skills live as folders containing a SKILL.md with YAML frontmatter
+// (`name`, `description`) plus a markdown body. Mason scans two roots:
+//   • ~/.mason/skills/<slug>/SKILL.md       — user-authored, edited in Settings
+//   • ~/.ai-dev-kit/repo/databricks-skills/<slug>/SKILL.md — read-only
+// Progressive disclosure: chat.ts injects a manifest (name + description)
+// into the system prompt and the renderer's load_skill tool reads the full
+// SKILL.md body on demand. Anthropic-compatible format so user-authored
+// skills are portable.
+
+type SkillSource = "user" | "ai-dev-kit";
+
+interface SkillRecord {
+  name: string;
+  description: string;
+  source: SkillSource;
+  slug: string;
+  path: string;
+  body: string;
+}
+
+interface SkillsConfig {
+  disabledSkills: string[];
+  autoLoadSkills: boolean;
+}
+const DEFAULT_SKILLS_CONFIG: SkillsConfig = { disabledSkills: [], autoLoadSkills: true };
+
+function readSkillsConfig(): SkillsConfig {
+  if (!fs.existsSync(SKILLS_FILE)) return { ...DEFAULT_SKILLS_CONFIG };
+  try {
+    const data = JSON.parse(fs.readFileSync(SKILLS_FILE, "utf-8"));
+    return {
+      disabledSkills: Array.isArray(data.disabledSkills) ? data.disabledSkills : [],
+      autoLoadSkills: data.autoLoadSkills !== false,
+    };
+  } catch (_) {
+    return { ...DEFAULT_SKILLS_CONFIG };
+  }
+}
+
+function writeSkillsConfig(cfg: SkillsConfig): void {
+  if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.writeFileSync(SKILLS_FILE, JSON.stringify(cfg, null, 2));
+}
+
+// Parse YAML-ish frontmatter — we only care about name + description, so a
+// regex-based parser is plenty (avoids pulling in a YAML lib).
+function parseSkillFile(filePath: string): { name: string; description: string; body: string } | null {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, "utf-8");
+  } catch (_) {
+    return null;
+  }
+  const m = raw.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
+  if (!m) return null;
+  const front = m[1];
+  const body = m[2] || "";
+  const getField = (key: string): string => {
+    const re = new RegExp(`^${key}\\s*:\\s*(.+?)\\s*$`, "m");
+    const mm = front.match(re);
+    if (!mm) return "";
+    // Trim surrounding quotes if present.
+    return mm[1].replace(/^["'](.*)["']$/, "$1").trim();
+  };
+  const name = getField("name");
+  const description = getField("description");
+  if (!name) return null;
+  return { name, description, body };
+}
+
+function scanSkillsDir(root: string, source: SkillSource): SkillRecord[] {
+  if (!fs.existsSync(root)) return [];
+  const out: SkillRecord[] = [];
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(root);
+  } catch (_) {
+    return out;
+  }
+  for (const slug of entries) {
+    const dir = path.join(root, slug);
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(dir);
+    } catch (_) {
+      continue;
+    }
+    if (!stat.isDirectory()) continue;
+    const file = path.join(dir, "SKILL.md");
+    const parsed = parseSkillFile(file);
+    if (!parsed) continue;
+    out.push({ ...parsed, source, slug, path: file });
+  }
+  return out;
+}
+
+function listSkills(): SkillRecord[] {
+  // User skills win over ai-dev-kit on slug collision so a user can shadow.
+  const user = scanSkillsDir(USER_SKILLS_DIR, "user");
+  const devkit = scanSkillsDir(path.join(DEVKIT_REPO_DIR, "databricks-skills"), "ai-dev-kit");
+  const seen = new Set(user.map((s) => s.slug));
+  return [...user, ...devkit.filter((s) => !seen.has(s.slug))];
+}
+
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64) || "skill";
+}
+
+function serializeSkill(name: string, description: string, body: string): string {
+  // Escape any closing-fence sequences in the description (unlikely but safe).
+  const safeDesc = description.replace(/\n/g, " ").trim();
+  return `---\nname: ${name}\ndescription: ${safeDesc}\n---\n${body.trim()}\n`;
+}
+
+ipcMain.handle("skills-list", () => {
+  return listSkills().map((s) => ({
+    name: s.name,
+    description: s.description,
+    source: s.source,
+    slug: s.slug,
+    path: s.path,
+  }));
+});
+
+ipcMain.handle("skills-load", (_event: IpcMainInvokeEvent, slug: string) => {
+  const skills = listSkills();
+  const hit = skills.find((s) => s.slug === slug);
+  if (!hit) return null;
+  return { slug: hit.slug, name: hit.name, description: hit.description, body: hit.body };
+});
+
+ipcMain.handle(
+  "skills-save",
+  (_event: IpcMainInvokeEvent, { name, description, body, slug }: { name: string; description: string; body: string; slug?: string }) => {
+    const cleanName = String(name || "").trim();
+    if (!cleanName) throw new Error("Skill name is required.");
+    const targetSlug = slug || slugify(cleanName);
+    if (!fs.existsSync(USER_SKILLS_DIR)) fs.mkdirSync(USER_SKILLS_DIR, { recursive: true });
+    const skillDir = path.join(USER_SKILLS_DIR, targetSlug);
+    if (!fs.existsSync(skillDir)) fs.mkdirSync(skillDir, { recursive: true });
+    const filePath = path.join(skillDir, "SKILL.md");
+    fs.writeFileSync(filePath, serializeSkill(cleanName, description || "", body || ""));
+    return {
+      name: cleanName,
+      description: description || "",
+      source: "user" as SkillSource,
+      slug: targetSlug,
+      path: filePath,
+    };
+  }
+);
+
+ipcMain.handle("skills-delete", (_event: IpcMainInvokeEvent, slug: string) => {
+  const dir = path.join(USER_SKILLS_DIR, slug);
+  if (!fs.existsSync(dir)) return { ok: false };
+  fs.rmSync(dir, { recursive: true, force: true });
+  return { ok: true };
+});
+
+ipcMain.handle("skills-config-load", () => readSkillsConfig());
+
+ipcMain.handle("skills-config-save", (_event: IpcMainInvokeEvent, partial: Partial<SkillsConfig>) => {
+  const next = { ...readSkillsConfig(), ...partial };
+  if (partial.disabledSkills && Array.isArray(partial.disabledSkills)) {
+    // Dedupe.
+    next.disabledSkills = Array.from(new Set(partial.disabledSkills));
+  }
+  writeSkillsConfig(next);
   return next;
 });
 
