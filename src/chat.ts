@@ -50,6 +50,27 @@ const SEND_ICON =
 const STOP_ICON =
   '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
 
+// Build the <available_skills> manifest from enabled skills. Only the name +
+// one-line description go into the system prompt; full bodies load on demand
+// via the load_skill tool.
+function buildSkillsManifest(): string {
+  const enabled = (mason.skills || []).filter((s) => !mason.disabledSkills.has(s.slug));
+  if (enabled.length === 0) return "";
+  const lines: string[] = [
+    "<available_skills>",
+    "The following skills are available. Each is a folder of instructions you can load on-demand by calling the load_skill tool with the skill's slug. Load a skill when the user's request matches its description; then follow the skill's full instructions precisely.",
+    "",
+  ];
+  for (const s of enabled) {
+    lines.push("  <skill>");
+    lines.push(`    <name>${s.slug}</name>`);
+    if (s.description) lines.push(`    <description>${s.description.replace(/[<>]/g, "")}</description>`);
+    lines.push("  </skill>");
+  }
+  lines.push("</available_skills>");
+  return lines.join("\n");
+}
+
 const MAX_TOOL_RESULT_CHARS = 256 * 1024;
 function capToolResult(text: string, toolName: string): string {
   if (text.length <= MAX_TOOL_RESULT_CHARS) return text;
@@ -241,11 +262,18 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
 
     const trimmed = trimHistory(mason.history as any[]);
     const sysPrompt = (mason.systemPrompt || "").trim();
+    const skillsManifest = buildSkillsManifest();
     const hasUserSystem = trimmed.some((m: any) => m.role === "system");
-    const messagesToSend =
-      sysPrompt && !hasUserSystem
-        ? [{ role: "system", content: sysPrompt }, ...trimmed]
-        : trimmed;
+
+    // System messages assembled in order: skills manifest first (cheap, helps
+    // the model discover available skills), then the user-configured system
+    // prompt if any. main.ts adds its tool-aware system prompt on top when
+    // tools are attached.
+    const systemMessages: Array<{ role: "system"; content: string }> = [];
+    if (skillsManifest) systemMessages.push({ role: "system", content: skillsManifest });
+    if (sysPrompt && !hasUserSystem) systemMessages.push({ role: "system", content: sysPrompt });
+
+    const messagesToSend = systemMessages.length > 0 ? [...systemMessages, ...trimmed] : trimmed;
 
     let result: ChatResultPayload;
     try {
@@ -334,6 +362,41 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
         // Renderer-handled tools (ask_user, etc.) skip the IPC round-trip and
         // also skip the "Calling tool: …" announcement since they render their
         // own UI inline.
+        if (toolName === "load_skill") {
+          try {
+            const slug = String(args.slug || "");
+            if (!slug) throw new Error("slug is required");
+            addMessageEl("tool-call", `Loading skill: ${slug}`);
+            const skill = (await window.api.skillsLoad(slug)) as
+              | { slug: string; name: string; description: string; body: string }
+              | null;
+            if (!skill) {
+              (mason.history as any[]).push({
+                role: "tool",
+                tool_call_id: tc.id,
+                name: toolName,
+                content: `Error: skill "${slug}" not found.`,
+              });
+            } else {
+              const content = `# ${skill.name}\n\n${skill.body}`;
+              (mason.history as any[]).push({
+                role: "tool",
+                tool_call_id: tc.id,
+                name: toolName,
+                content: capToolResult(content, toolName),
+              });
+            }
+          } catch (e) {
+            (mason.history as any[]).push({
+              role: "tool",
+              tool_call_id: tc.id,
+              name: toolName,
+              content: `Error: ${(e as Error).message}`,
+            });
+          }
+          continue;
+        }
+
         if (toolName === "ask_user") {
           try {
             // Accept the new batched shape ({ questions: [...] }) but stay

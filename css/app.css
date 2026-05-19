@@ -730,6 +730,15 @@
       }
       .modal-input:focus { border-color: #007aff; }
       body.dark .modal-input { background: #1e1e1e; border-color: #444; color: #e0e0e0; }
+      .modal-error {
+        color: #c00;
+        font-size: 0.82rem;
+        margin: -4px 0 12px;
+        padding: 6px 8px;
+        background: #fff5f5;
+        border-radius: 6px;
+      }
+      body.dark .modal-error { background: #2e1a1a; color: #ff8888; }
       .modal-btns { display: flex; gap: 8px; justify-content: flex-end; }
       .modal-btn {
         padding: 8px 16px;

@@ -54,6 +54,21 @@ declare global {
     name: string;
   }
 
+  type MasonSkillSource = "user" | "ai-dev-kit";
+
+  interface MasonSkillSummary {
+    name: string;
+    description: string;
+    source: MasonSkillSource;
+    slug: string;
+    path: string;
+  }
+
+  interface MasonSkillsConfig {
+    disabledSkills: string[];
+    autoLoadSkills: boolean;
+  }
+
   interface MasonSettings {
     darkMode: boolean;
     systemPrompt: string;
@@ -86,6 +101,10 @@ declare global {
     dashboardsList: MasonDashboard[];
     dashboardsLoading?: boolean;
     autoConnectDone: boolean;
+
+    skills: MasonSkillSummary[];
+    disabledSkills: Set<string>;
+    autoLoadSkills: boolean;
 
     defaultModel?: { value: string; label: string } | null;
 

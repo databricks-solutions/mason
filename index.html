@@ -106,6 +106,16 @@
                     </span>
                     <span class="popup-item-text">Tools</span>
                   </div>
+                  <div class="popup-item" role="menuitem" id="menuSkills">
+                    <span class="popup-item-icon" aria-hidden="true">
+                      <!-- Skills — book -->
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                      </svg>
+                    </span>
+                    <span class="popup-item-text">Skills</span>
+                  </div>
                   <div class="popup-item" role="menuitem" id="menuSettings">
                     <span class="popup-item-icon" aria-hidden="true">
                       <!-- Settings — cog -->
@@ -255,6 +265,25 @@
             <button class="modal-btn primary" id="endpointAdd" style="width:100%;">Add Endpoint</button>
           </div>
           <div style="margin-bottom:18px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+              <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;">Skills</div>
+              <button class="modal-btn primary" id="skillsNewBtn" style="padding:4px 12px;font-size:0.78rem;">+ New Skill</button>
+            </div>
+            <div style="font-size:0.75rem;opacity:0.55;margin-bottom:8px;">Specialized instruction bundles loaded on-demand when the LLM determines they're relevant. User skills live at <code style="font-size:0.72rem;">~/.mason/skills/</code>; ai-dev-kit skills are read-only.</div>
+            <div id="skillsSettingsList" style="margin-bottom:8px;max-height:280px;overflow-y:auto;"></div>
+            <div class="settings-toggle-row">
+              <div>
+                <div style="font-size:0.85rem;font-weight:500;">Auto-load skills</div>
+                <div style="font-size:0.75rem;opacity:0.45;">When on, new skills are enabled by default</div>
+              </div>
+              <label class="settings-switch">
+                <input type="checkbox" id="autoLoadSkillsToggle">
+                <span id="autoLoadSkillsTrack" class="settings-switch-track"></span>
+                <span id="autoLoadSkillsThumb" class="settings-switch-thumb"></span>
+              </label>
+            </div>
+          </div>
+          <div style="margin-bottom:18px;">
             <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">Default Model</div>
             <select class="modal-input" id="defaultModelSelect" style="margin-bottom:4px;cursor:pointer;"></select>
             <div style="font-size:0.72rem;opacity:0.35;">Auto-selected on app start and profile switch</div>
@@ -332,6 +361,31 @@
       </div>
     </div>
 
+    <!-- Skills Modal — toggle which skills are exposed to the LLM via <available_skills> -->
+    <div class="modal-overlay" id="skillsModal" role="dialog" aria-modal="true" aria-labelledby="skillsModalTitle">
+      <div class="modal">
+        <h3 id="skillsModalTitle">Available Skills</h3>
+        <div id="skillsModalList" style="max-height:400px;overflow-y:auto;margin-bottom:12px;"></div>
+        <div class="modal-btns">
+          <button class="modal-btn secondary" id="skillsModalClose">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Skill Editor Modal -->
+    <div class="modal-overlay" id="skillEditorModal" role="dialog" aria-modal="true" aria-labelledby="skillEditorTitle">
+      <div class="modal" style="min-width:560px;">
+        <h3 id="skillEditorTitle">New Skill</h3>
+        <input class="modal-input" id="skillEditorName" type="text" placeholder="Skill name (e.g. DCF Analysis)" />
+        <input class="modal-input" id="skillEditorDescription" type="text" placeholder="One-line description shown to the LLM" />
+        <textarea class="modal-input" id="skillEditorBody" placeholder="# Skill instructions in markdown…" style="min-height:240px;font-family:'SF Mono', Menlo, monospace;font-size:0.84rem;"></textarea>
+        <div id="skillEditorError" class="modal-error" style="display:none;"></div>
+        <div class="modal-btns">
+          <button class="modal-btn secondary" id="skillEditorCancel">Cancel</button>
+          <button class="modal-btn primary" id="skillEditorSave">Save</button>
+        </div>
+      </div>
+    </div>
 
     <!-- MCP Modal -->
     <div class="modal-overlay" id="mcpModal" role="dialog" aria-modal="true" aria-labelledby="mcpModalTitle">
