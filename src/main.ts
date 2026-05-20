@@ -131,6 +131,38 @@ function chatFetch(
 // (Gemini, some Anthropic responses, etc. return `content: [{type:"text", text:"..."}]`).
 // Without this, the renderer feeds an array to marked() and gets a confusing
 // "input parameter is of type [object Array], string expected" error.
+// Sanitize tool_calls before returning to the renderer. Two failure modes:
+//   • Empty arguments: providers stream tools that take no params as
+//     function.arguments="" — the Databricks AI Gateway rejects that on the
+//     next round-trip ("not a valid JSON string").
+//   • Truncated arguments: stream cut off mid-call (max_tokens hit, abort,
+//     network glitch), leaving partial JSON like {"k":"v" with no close brace.
+//     Gateway rejects with "Unexpected end-of-input".
+// Both cases get rewritten to "{}" so the next turn parses cleanly. The tool
+// will execute with empty args and the model can correct on the following turn.
+// Without this, the conversation is wedged until the user reloads.
+function sanitizeToolCalls(toolCalls: any[]): any[] {
+  return toolCalls.map((tc) => {
+    if (!tc?.function) return tc;
+    let args = tc.function.arguments;
+    let needsReset = false;
+    if (typeof args !== "string" || !args.trim()) {
+      needsReset = true;
+    } else {
+      try {
+        JSON.parse(args);
+      } catch (_) {
+        needsReset = true;
+        console.warn(
+          `[CHAT] Tool call ${tc.function.name} had malformed arguments; replacing with {}. Raw: ${args.slice(0, 200)}`
+        );
+      }
+    }
+    if (!needsReset) return tc;
+    return { ...tc, function: { ...tc.function, arguments: "{}" } };
+  });
+}
+
 function flattenContent(c: any): string {
   if (c == null) return "";
   if (typeof c === "string") return c;
@@ -2069,18 +2101,11 @@ ipcMain.handle(
           } catch (_) {}
         }
       }
-      // Compact (in case the stream skipped an index) and decide the response shape.
-      const toolCalls = toolCallsAccum.filter((tc) => tc && tc.function?.name);
-      // Normalize empty arguments to "{}" — providers stream tools that take
-      // no parameters as an empty `function.arguments` delta, and the
-      // Databricks AI Gateway rejects empty strings on the next round-trip
-      // ("Param 'arguments' … is not a valid JSON string"). OpenAI/Anthropic
-      // SDKs do the same normalization.
-      for (const tc of toolCalls) {
-        if (!tc.function.arguments || !tc.function.arguments.trim()) {
-          tc.function.arguments = "{}";
-        }
-      }
+      // Compact (in case the stream skipped an index) and sanitize tool args
+      // (empty or malformed JSON → "{}") before returning.
+      const toolCalls = sanitizeToolCalls(
+        toolCallsAccum.filter((tc) => tc && tc.function?.name)
+      );
       if (toolCalls.length > 0) {
         return {
           type: "tool_calls",
@@ -2112,7 +2137,11 @@ ipcMain.handle(
       }
 
       if (toolCalls.length > 0) {
-        return { type: "tool_calls", content: textContent || null, tool_calls: toolCalls };
+        return {
+          type: "tool_calls",
+          content: textContent || null,
+          tool_calls: sanitizeToolCalls(toolCalls),
+        };
       }
       return { type: "text", content: flattenContent(textContent) || JSON.stringify(data) };
     }
@@ -2122,7 +2151,7 @@ ipcMain.handle(
     if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
       return {
         type: "tool_calls",
-        tool_calls: choice.message.tool_calls,
+        tool_calls: sanitizeToolCalls(choice.message.tool_calls),
         content: flattenContent(choice.message.content),
       };
     }
