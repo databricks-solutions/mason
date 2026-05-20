@@ -229,7 +229,15 @@ function renderUcMcpList(connections: UcConnection[], filter: string = ""): void
   });
 
   const mcpUrlFor = (conn: UcConnection): string => {
-    if (conn.directHost) return `${conn.directHost.replace(/\/+$/, "")}/mcp`;
+    // The directHost shortcut was added so MCP-speaking Databricks Apps
+    // (*.databricksapps.com) could be hit directly when the UC proxy
+    // requires per-user OAuth. For SaaS endpoints (mcp.atlassian.com,
+    // googleapis.com, etc.) the UC proxy is the only correct entry —
+    // bypassing it lands on a non-MCP host and 404s. Restrict the
+    // shortcut to Databricks App hosts only.
+    if (conn.directHost && /\.databricksapps\.com(?:\/|$|:)/i.test(conn.directHost)) {
+      return `${conn.directHost.replace(/\/+$/, "")}/mcp`;
+    }
     return `${host}/api/2.0/mcp/external/${encodeURIComponent(conn.name)}`;
   };
 
