@@ -317,14 +317,34 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
 
     if (result.type === "text") {
       const messagesEl = mason.el.messages as HTMLElement | null;
-      (mason.history as any[]).push({ role: "assistant", content: result.content });
+      const content = result.content || "";
+      // If we get back an empty text response in the middle of a multi-turn
+      // tool loop, the model most likely truncated (e.g. Opus 4.7 burned its
+      // max_tokens budget on extended thinking). Surface a clear hint
+      // instead of silently rendering an empty bubble and exiting.
+      if (!content.trim()) {
+        const hasPriorTools = (mason.history as any[]).some(
+          (m: any) => m.role === "tool" || (m.role === "assistant" && Array.isArray(m.tool_calls))
+        );
+        const hint = hasPriorTools
+          ? "Model returned an empty response — likely hit its token budget mid-thinking. Try sending 'continue' to resume, or rephrase your last request to reduce upstream context."
+          : "Model returned an empty response. Try sending the message again or switching to a different model.";
+        addMessageEl("error", hint);
+        (mason.history as any[]).push({ role: "assistant", content: "" });
+        // Remove the empty streaming bubble if one was created.
+        const sel = streamingEl as HTMLElement | null;
+        if (sel) sel.remove();
+        await saveCurrentChat();
+        return;
+      }
+      (mason.history as any[]).push({ role: "assistant", content });
       const sel = streamingEl as HTMLElement | null;
       if (sel) {
         sel.style.whiteSpace = "";
-        sel.innerHTML = renderMarkdown(result.content || "");
+        sel.innerHTML = renderMarkdown(content);
         if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
       } else {
-        addMessageEl("assistant", result.content || "");
+        addMessageEl("assistant", content);
       }
       await saveCurrentChat();
       return;
@@ -435,6 +455,12 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
         }
 
         addMessageEl("tool-call", `Calling tool: ${toolName}`);
+        // Show the building-bricks indicator while the tool runs. addMessageEl
+        // above removed any existing indicator, and tool execution can take
+        // multiple seconds for stdio MCP / external API calls. Without this,
+        // users see "Calling tool:" then static silence and assume Mason is
+        // stuck.
+        showThinking();
 
         if (BUILTIN_TOOL_NAMES.has(toolName)) {
           try {

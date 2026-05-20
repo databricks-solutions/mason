@@ -1982,7 +1982,7 @@ ipcMain.handle(
         }
       }
 
-      body = { model, max_output_tokens: 4096, input };
+      body = { model, max_output_tokens: 16384, input };
 
       if (tools && tools.length > 0) {
         body.tools = tools.map((t: any) => ({
@@ -2007,14 +2007,14 @@ ipcMain.handle(
         const hasSystem = messages.some((m: any) => m.role === "system");
         body = {
           model,
-          max_tokens: 4096,
+          max_tokens: 16384,
           messages: hasSystem ? messages : [systemMsg, ...messages],
           tools,
           tool_choice: "auto",
         };
         console.log(`[CHAT] Sending ${tools.length} tools: ${toolNames}`);
       } else {
-        body = { model, max_tokens: 4096, messages };
+        body = { model, max_tokens: 16384, messages };
       }
     }
 
