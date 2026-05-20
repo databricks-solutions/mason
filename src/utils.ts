@@ -113,5 +113,32 @@ function trimHistory(history: MasonMessage[]): MasonMessage[] {
     }
   }
 
-  return [...systems, ...kept];
+  // Drop orphan tool results — a role:"tool" whose tool_call_id isn't matched
+  // by a tool_calls[].id in an earlier role:"assistant" message within the
+  // kept slice. Slicing or char-budget trimming can leave these dangling when
+  // the corresponding assistant message gets pruned, and Anthropic (via the
+  // Databricks Gateway) rejects the whole request: "unexpected tool_use_id
+  // found in tool_result blocks ... must have a corresponding tool_use block
+  // in the previous message."
+  const knownToolUseIds = new Set<string>();
+  const cleaned: MasonMessage[] = [];
+  for (const m of kept) {
+    const anyM = m as any;
+    if (anyM.role === "assistant" && Array.isArray(anyM.tool_calls)) {
+      for (const tc of anyM.tool_calls) {
+        if (tc?.id) knownToolUseIds.add(tc.id);
+      }
+      cleaned.push(m);
+      continue;
+    }
+    if (anyM.role === "tool") {
+      const id = anyM.tool_call_id;
+      if (id && knownToolUseIds.has(id)) cleaned.push(m);
+      // orphan tool result — drop silently
+      continue;
+    }
+    cleaned.push(m);
+  }
+
+  return [...systems, ...cleaned];
 }
