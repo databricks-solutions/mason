@@ -2058,6 +2058,16 @@ ipcMain.handle(
       }
       // Compact (in case the stream skipped an index) and decide the response shape.
       const toolCalls = toolCallsAccum.filter((tc) => tc && tc.function?.name);
+      // Normalize empty arguments to "{}" — providers stream tools that take
+      // no parameters as an empty `function.arguments` delta, and the
+      // Databricks AI Gateway rejects empty strings on the next round-trip
+      // ("Param 'arguments' … is not a valid JSON string"). OpenAI/Anthropic
+      // SDKs do the same normalization.
+      for (const tc of toolCalls) {
+        if (!tc.function.arguments || !tc.function.arguments.trim()) {
+          tc.function.arguments = "{}";
+        }
+      }
       if (toolCalls.length > 0) {
         return {
           type: "tool_calls",
