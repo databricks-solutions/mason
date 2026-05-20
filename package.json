@@ -1,6 +1,6 @@
 {
   "name": "mason",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Desktop chat app for Databricks AI Gateway with MCP tool calling",
   "author": "Databricks",
   "main": "build/ts/main.js",

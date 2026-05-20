@@ -42,6 +42,22 @@ interface McpGlobalConfig {
   }>;
 }
 
+// Detect "needs UC connection authorization" from an error message — covers
+// both raw HTTP 401/403 and the JSON-RPC-embedded variant the Databricks MCP
+// proxy returns ("Please login first…", "Credential for user identity…").
+// If the error message itself includes an explicit authorize URL, return it
+// so the caller can prefer it over a reconstructed /explore/connections one.
+function detectAuthError(msg: string): { authError: boolean; authorizeUrl: string | null } {
+  const authError =
+    msg.includes("401") ||
+    msg.includes("403") ||
+    /unauthorized/i.test(msg) ||
+    /please login first/i.test(msg) ||
+    /credential for user identity/i.test(msg);
+  const urlMatch = msg.match(/https:\/\/[^\s"']+\/explore\/connections\/[^\s"']+/);
+  return { authError, authorizeUrl: urlMatch ? urlMatch[0] : null };
+}
+
 async function connectMcpServer(url: string): Promise<void> {
   console.log(`[MCP UI] Connecting to ${url}...`);
   const token = await getAuthToken();
@@ -213,7 +229,15 @@ function renderUcMcpList(connections: UcConnection[], filter: string = ""): void
   });
 
   const mcpUrlFor = (conn: UcConnection): string => {
-    if (conn.directHost) return `${conn.directHost.replace(/\/+$/, "")}/mcp`;
+    // The directHost shortcut was added so MCP-speaking Databricks Apps
+    // (*.databricksapps.com) could be hit directly when the UC proxy
+    // requires per-user OAuth. For SaaS endpoints (mcp.atlassian.com,
+    // googleapis.com, etc.) the UC proxy is the only correct entry —
+    // bypassing it lands on a non-MCP host and 404s. Restrict the
+    // shortcut to Databricks App hosts only.
+    if (conn.directHost && /\.databricksapps\.com(?:\/|$|:)/i.test(conn.directHost)) {
+      return `${conn.directHost.replace(/\/+$/, "")}/mcp`;
+    }
     return `${host}/api/2.0/mcp/external/${encodeURIComponent(conn.name)}`;
   };
 
@@ -256,11 +280,16 @@ function renderUcMcpList(connections: UcConnection[], filter: string = ""): void
           renderUcMcpList(cachedUcConnections, searchEl?.value || "");
         } catch (e) {
           const msg = (e as Error).message;
-          if (msg.includes("401") || msg.includes("403") || msg.includes("Unauthorized")) {
+          const { authError, authorizeUrl } = detectAuthError(msg);
+          if (authError) {
             btn.textContent = "Authorize...";
             const profile = getSelectedProfile();
-            if (profile?.host) {
-              const authUrl = `${profile.host.replace(/\/+$/, "")}/explore/connections/${encodeURIComponent(conn.name)}`;
+            const authUrl =
+              authorizeUrl ||
+              (profile?.host
+                ? `${profile.host.replace(/\/+$/, "")}/explore/connections/${encodeURIComponent(conn.name)}`
+                : "");
+            if (authUrl) {
               await window.api.openAuthWindow({ url: authUrl, title: `Authorize ${conn.name}` });
             }
             btn.textContent = "Connecting...";
@@ -358,6 +387,16 @@ async function autoConnectMcp(): Promise<void> {
     console.log("[MCP UI] Migrated per-workspace stdio servers to global config");
   }
 
+  // Track URLs that are demonstrably not MCP-capable so we can drop them from
+  // workspace config at the end of the loop. Only UC proxy URLs are eligible —
+  // for arbitrary user-pasted HTTP MCP servers, transient errors shouldn't
+  // self-destruct the saved entry.
+  const deadUcUrls: string[] = [];
+  const isPermanentNonMcp = (msg: string): boolean =>
+    /MCP 404/.test(msg) ||
+    /HTML error page/.test(msg) ||
+    /MCP 4\d\d/.test(msg); // any 4xx that isn't an auth-required signal
+
   for (const url of wsConfig.mcpServers || []) {
     if (mason.mcpServers.some((s) => s.url === url)) continue;
     try {
@@ -366,28 +405,57 @@ async function autoConnectMcp(): Promise<void> {
     } catch (e) {
       const msg = (e as Error).message;
       const ucMatch = url.match(/^(https:\/\/[^/]+)\/api\/2\.0\/mcp\/external\/([^/?#]+)/);
-      const isAuthError = msg.includes("401") || msg.includes("403") || msg.includes("Unauthorized");
-      if (ucMatch && isAuthError) {
+      const { authError, authorizeUrl: embeddedUrl } = detectAuthError(msg);
+      if (ucMatch && authError) {
         const [, host, name] = ucMatch;
         const decoded = decodeURIComponent(name);
         console.log(
-          `[MCP UI] Auto-connect 401 for UC connection "${decoded}" — opening authorize window`
+          `[MCP UI] Auto-connect auth-required for UC connection "${decoded}" — opening authorize window`
         );
         try {
-          const authUrl = `${host}/explore/connections/${encodeURIComponent(decoded)}`;
+          const authUrl = embeddedUrl || `${host}/explore/connections/${encodeURIComponent(decoded)}`;
           await window.api.openAuthWindow({ url: authUrl, title: `Authorize ${decoded}` });
           await connectMcpServer(url);
           console.log(`[MCP UI] Auto-connected after authorize: ${url}`);
           continue;
         } catch (retryErr) {
+          const retryMsg = (retryErr as Error).message;
           console.error(
             `[MCP UI] Auto-connect still failed after authorize for ${url}:`,
-            (retryErr as Error).message
+            retryMsg
           );
+          // Post-authorize 4xx means this connection isn't a real MCP server
+          // (just a credential proxy for SaaS REST). Drop it.
+          if (isPermanentNonMcp(retryMsg)) deadUcUrls.push(url);
         }
+      } else if (ucMatch && isPermanentNonMcp(msg)) {
+        // UC proxy URL that returns a 4xx with no auth-required hint — same
+        // verdict: connection isn't MCP. Drop from saved config.
+        console.error(
+          `[MCP UI] Auto-connect failed for ${url} (non-MCP connection — dropping from saved config):`,
+          msg
+        );
+        deadUcUrls.push(url);
       } else {
         console.error(`[MCP UI] Auto-connect failed for ${url}:`, msg);
       }
+    }
+  }
+
+  // Self-heal: persist the pruned URL list back to workspace config so failed
+  // UC connections don't haunt every subsequent launch. Skip the write if
+  // nothing was dropped to avoid spurious disk activity.
+  if (deadUcUrls.length > 0) {
+    const dropSet = new Set(deadUcUrls);
+    wsConfig.mcpServers = (wsConfig.mcpServers || []).filter((u) => !dropSet.has(u));
+    try {
+      await window.api.workspaceSave({ profile, config: wsConfig });
+      console.log(
+        `[MCP UI] Dropped ${deadUcUrls.length} stale UC URL${deadUcUrls.length === 1 ? "" : "s"} from saved config:`,
+        deadUcUrls
+      );
+    } catch (e) {
+      console.error("[MCP UI] Failed to save pruned workspace config:", (e as Error).message);
     }
   }
 

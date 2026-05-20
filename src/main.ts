@@ -131,6 +131,38 @@ function chatFetch(
 // (Gemini, some Anthropic responses, etc. return `content: [{type:"text", text:"..."}]`).
 // Without this, the renderer feeds an array to marked() and gets a confusing
 // "input parameter is of type [object Array], string expected" error.
+// Sanitize tool_calls before returning to the renderer. Two failure modes:
+//   • Empty arguments: providers stream tools that take no params as
+//     function.arguments="" — the Databricks AI Gateway rejects that on the
+//     next round-trip ("not a valid JSON string").
+//   • Truncated arguments: stream cut off mid-call (max_tokens hit, abort,
+//     network glitch), leaving partial JSON like {"k":"v" with no close brace.
+//     Gateway rejects with "Unexpected end-of-input".
+// Both cases get rewritten to "{}" so the next turn parses cleanly. The tool
+// will execute with empty args and the model can correct on the following turn.
+// Without this, the conversation is wedged until the user reloads.
+function sanitizeToolCalls(toolCalls: any[]): any[] {
+  return toolCalls.map((tc) => {
+    if (!tc?.function) return tc;
+    let args = tc.function.arguments;
+    let needsReset = false;
+    if (typeof args !== "string" || !args.trim()) {
+      needsReset = true;
+    } else {
+      try {
+        JSON.parse(args);
+      } catch (_) {
+        needsReset = true;
+        console.warn(
+          `[CHAT] Tool call ${tc.function.name} had malformed arguments; replacing with {}. Raw: ${args.slice(0, 200)}`
+        );
+      }
+    }
+    if (!needsReset) return tc;
+    return { ...tc, function: { ...tc.function, arguments: "{}" } };
+  });
+}
+
 function flattenContent(c: any): string {
   if (c == null) return "";
   if (typeof c === "string") return c;
@@ -1407,6 +1439,7 @@ async function mcpRequest(serverUrl: string, token: string, method: string, para
     if (lastData) {
       const parsed = JSON.parse(lastData);
       console.log(`[MCP] <<< SSE parsed:`, sanitizeLog(JSON.stringify(parsed, null, 2).slice(0, 500)));
+      maybeThrowJsonRpcAuthError(parsed);
       return parsed;
     }
     throw new Error("No data in SSE response");
@@ -1414,7 +1447,30 @@ async function mcpRequest(serverUrl: string, token: string, method: string, para
 
   const json = await res.json();
   console.log(`[MCP] <<< JSON:`, sanitizeLog(JSON.stringify(json, null, 2).slice(0, 500)));
+  maybeThrowJsonRpcAuthError(json);
   return json;
+}
+
+// Detect JSON-RPC errors that signal "user needs to authorize this UC connection"
+// and convert them to thrown errors carrying statusCode 401 so the renderer's
+// existing 401 auto-authorize flow fires. The Databricks MCP proxy returns these
+// as HTTP-200 JSON-RPC errors with an embedded authorize URL — without this
+// translation, Mason silently records 0 tools and the user is stuck.
+function maybeThrowJsonRpcAuthError(payload: any): void {
+  if (!payload || !payload.error) return;
+  const msg = typeof payload.error.message === "string" ? payload.error.message : "";
+  const looksLikeAuth =
+    /please login first/i.test(msg) ||
+    /credential for user identity/i.test(msg) ||
+    /not authorized/i.test(msg);
+  if (!looksLikeAuth) return;
+  const err: any = new Error(`MCP 401: ${msg}`);
+  err.statusCode = 401;
+  // Pull the explicit authorize URL out of the message if present so the
+  // renderer can open it without having to reconstruct it.
+  const urlMatch = msg.match(/https:\/\/[^\s"']+\/explore\/connections\/[^\s"']+/);
+  if (urlMatch) err.authorizeUrl = urlMatch[0];
+  throw err;
 }
 
 ipcMain.handle("mcp-connect", async (_event: IpcMainInvokeEvent, { serverUrl, token }: { serverUrl: string; token: string }) => {
@@ -1750,15 +1806,28 @@ ipcMain.handle("list-uc-connections", async (_event: IpcMainInvokeEvent, { host,
       if (!pageToken) break;
     }
 
+    // Filter out HTTP connections that aren't MCP-speaking — many UC HTTP
+    // connections (Google Drive, SharePoint, GitHub Copilot API, Tavily REST,
+    // etc.) are credential-only OAuth shims for SaaS REST APIs. They share
+    // the HTTP connection_type but the MCP proxy at /api/2.0/mcp/external/
+    // returns 404 for them. The API surfaces this as is_mcp_connection.
+    // Keep connections where the field is missing (older workspaces /
+    // legacy connections that pre-date the flag) so we don't regress.
+    const isMcpConnection = (c: any): boolean => {
+      const v = c.is_mcp_connection ?? c.isMcpConnection;
+      if (v === undefined || v === null) return true;
+      if (typeof v === "string") return v.toLowerCase() !== "false";
+      return v !== false;
+    };
     const connections = allConnections
-      .filter((c) => c.connection_type === "HTTP")
+      .filter((c) => c.connection_type === "HTTP" && isMcpConnection(c))
       .map((c) => {
         const opts = c.options || c.properties || {};
         const rawHost = opts.host || opts.base_url || opts.host_url || opts.url || opts.endpoint || "";
         const directHost = rawHost ? rawHost.replace(/\/+$/, "") : "";
         return { name: c.name, comment: c.comment || "", directHost };
       });
-    console.log(`[UC] Found ${connections.length} HTTP connections (of ${allConnections.length} total)`);
+    console.log(`[UC] Found ${connections.length} MCP-capable HTTP connections (of ${allConnections.length} total)`);
     for (const c of connections) {
       console.log(`[UC]   - ${c.name} -> ${c.directHost || "(no host; will use UC proxy)"}`);
     }
@@ -2032,8 +2101,11 @@ ipcMain.handle(
           } catch (_) {}
         }
       }
-      // Compact (in case the stream skipped an index) and decide the response shape.
-      const toolCalls = toolCallsAccum.filter((tc) => tc && tc.function?.name);
+      // Compact (in case the stream skipped an index) and sanitize tool args
+      // (empty or malformed JSON → "{}") before returning.
+      const toolCalls = sanitizeToolCalls(
+        toolCallsAccum.filter((tc) => tc && tc.function?.name)
+      );
       if (toolCalls.length > 0) {
         return {
           type: "tool_calls",
@@ -2065,7 +2137,11 @@ ipcMain.handle(
       }
 
       if (toolCalls.length > 0) {
-        return { type: "tool_calls", content: textContent || null, tool_calls: toolCalls };
+        return {
+          type: "tool_calls",
+          content: textContent || null,
+          tool_calls: sanitizeToolCalls(toolCalls),
+        };
       }
       return { type: "text", content: flattenContent(textContent) || JSON.stringify(data) };
     }
@@ -2075,7 +2151,7 @@ ipcMain.handle(
     if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
       return {
         type: "tool_calls",
-        tool_calls: choice.message.tool_calls,
+        tool_calls: sanitizeToolCalls(choice.message.tool_calls),
         content: flattenContent(choice.message.content),
       };
     }
