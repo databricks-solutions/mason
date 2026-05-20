@@ -387,6 +387,16 @@ async function autoConnectMcp(): Promise<void> {
     console.log("[MCP UI] Migrated per-workspace stdio servers to global config");
   }
 
+  // Track URLs that are demonstrably not MCP-capable so we can drop them from
+  // workspace config at the end of the loop. Only UC proxy URLs are eligible —
+  // for arbitrary user-pasted HTTP MCP servers, transient errors shouldn't
+  // self-destruct the saved entry.
+  const deadUcUrls: string[] = [];
+  const isPermanentNonMcp = (msg: string): boolean =>
+    /MCP 404/.test(msg) ||
+    /HTML error page/.test(msg) ||
+    /MCP 4\d\d/.test(msg); // any 4xx that isn't an auth-required signal
+
   for (const url of wsConfig.mcpServers || []) {
     if (mason.mcpServers.some((s) => s.url === url)) continue;
     try {
@@ -409,14 +419,43 @@ async function autoConnectMcp(): Promise<void> {
           console.log(`[MCP UI] Auto-connected after authorize: ${url}`);
           continue;
         } catch (retryErr) {
+          const retryMsg = (retryErr as Error).message;
           console.error(
             `[MCP UI] Auto-connect still failed after authorize for ${url}:`,
-            (retryErr as Error).message
+            retryMsg
           );
+          // Post-authorize 4xx means this connection isn't a real MCP server
+          // (just a credential proxy for SaaS REST). Drop it.
+          if (isPermanentNonMcp(retryMsg)) deadUcUrls.push(url);
         }
+      } else if (ucMatch && isPermanentNonMcp(msg)) {
+        // UC proxy URL that returns a 4xx with no auth-required hint — same
+        // verdict: connection isn't MCP. Drop from saved config.
+        console.error(
+          `[MCP UI] Auto-connect failed for ${url} (non-MCP connection — dropping from saved config):`,
+          msg
+        );
+        deadUcUrls.push(url);
       } else {
         console.error(`[MCP UI] Auto-connect failed for ${url}:`, msg);
       }
+    }
+  }
+
+  // Self-heal: persist the pruned URL list back to workspace config so failed
+  // UC connections don't haunt every subsequent launch. Skip the write if
+  // nothing was dropped to avoid spurious disk activity.
+  if (deadUcUrls.length > 0) {
+    const dropSet = new Set(deadUcUrls);
+    wsConfig.mcpServers = (wsConfig.mcpServers || []).filter((u) => !dropSet.has(u));
+    try {
+      await window.api.workspaceSave({ profile, config: wsConfig });
+      console.log(
+        `[MCP UI] Dropped ${deadUcUrls.length} stale UC URL${deadUcUrls.length === 1 ? "" : "s"} from saved config:`,
+        deadUcUrls
+      );
+    } catch (e) {
+      console.error("[MCP UI] Failed to save pruned workspace config:", (e as Error).message);
     }
   }
 
