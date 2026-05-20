@@ -42,6 +42,22 @@ interface McpGlobalConfig {
   }>;
 }
 
+// Detect "needs UC connection authorization" from an error message — covers
+// both raw HTTP 401/403 and the JSON-RPC-embedded variant the Databricks MCP
+// proxy returns ("Please login first…", "Credential for user identity…").
+// If the error message itself includes an explicit authorize URL, return it
+// so the caller can prefer it over a reconstructed /explore/connections one.
+function detectAuthError(msg: string): { authError: boolean; authorizeUrl: string | null } {
+  const authError =
+    msg.includes("401") ||
+    msg.includes("403") ||
+    /unauthorized/i.test(msg) ||
+    /please login first/i.test(msg) ||
+    /credential for user identity/i.test(msg);
+  const urlMatch = msg.match(/https:\/\/[^\s"']+\/explore\/connections\/[^\s"']+/);
+  return { authError, authorizeUrl: urlMatch ? urlMatch[0] : null };
+}
+
 async function connectMcpServer(url: string): Promise<void> {
   console.log(`[MCP UI] Connecting to ${url}...`);
   const token = await getAuthToken();
@@ -256,11 +272,16 @@ function renderUcMcpList(connections: UcConnection[], filter: string = ""): void
           renderUcMcpList(cachedUcConnections, searchEl?.value || "");
         } catch (e) {
           const msg = (e as Error).message;
-          if (msg.includes("401") || msg.includes("403") || msg.includes("Unauthorized")) {
+          const { authError, authorizeUrl } = detectAuthError(msg);
+          if (authError) {
             btn.textContent = "Authorize...";
             const profile = getSelectedProfile();
-            if (profile?.host) {
-              const authUrl = `${profile.host.replace(/\/+$/, "")}/explore/connections/${encodeURIComponent(conn.name)}`;
+            const authUrl =
+              authorizeUrl ||
+              (profile?.host
+                ? `${profile.host.replace(/\/+$/, "")}/explore/connections/${encodeURIComponent(conn.name)}`
+                : "");
+            if (authUrl) {
               await window.api.openAuthWindow({ url: authUrl, title: `Authorize ${conn.name}` });
             }
             btn.textContent = "Connecting...";
@@ -366,15 +387,15 @@ async function autoConnectMcp(): Promise<void> {
     } catch (e) {
       const msg = (e as Error).message;
       const ucMatch = url.match(/^(https:\/\/[^/]+)\/api\/2\.0\/mcp\/external\/([^/?#]+)/);
-      const isAuthError = msg.includes("401") || msg.includes("403") || msg.includes("Unauthorized");
-      if (ucMatch && isAuthError) {
+      const { authError, authorizeUrl: embeddedUrl } = detectAuthError(msg);
+      if (ucMatch && authError) {
         const [, host, name] = ucMatch;
         const decoded = decodeURIComponent(name);
         console.log(
-          `[MCP UI] Auto-connect 401 for UC connection "${decoded}" — opening authorize window`
+          `[MCP UI] Auto-connect auth-required for UC connection "${decoded}" — opening authorize window`
         );
         try {
-          const authUrl = `${host}/explore/connections/${encodeURIComponent(decoded)}`;
+          const authUrl = embeddedUrl || `${host}/explore/connections/${encodeURIComponent(decoded)}`;
           await window.api.openAuthWindow({ url: authUrl, title: `Authorize ${decoded}` });
           await connectMcpServer(url);
           console.log(`[MCP UI] Auto-connected after authorize: ${url}`);

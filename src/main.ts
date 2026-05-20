@@ -1407,6 +1407,7 @@ async function mcpRequest(serverUrl: string, token: string, method: string, para
     if (lastData) {
       const parsed = JSON.parse(lastData);
       console.log(`[MCP] <<< SSE parsed:`, sanitizeLog(JSON.stringify(parsed, null, 2).slice(0, 500)));
+      maybeThrowJsonRpcAuthError(parsed);
       return parsed;
     }
     throw new Error("No data in SSE response");
@@ -1414,7 +1415,30 @@ async function mcpRequest(serverUrl: string, token: string, method: string, para
 
   const json = await res.json();
   console.log(`[MCP] <<< JSON:`, sanitizeLog(JSON.stringify(json, null, 2).slice(0, 500)));
+  maybeThrowJsonRpcAuthError(json);
   return json;
+}
+
+// Detect JSON-RPC errors that signal "user needs to authorize this UC connection"
+// and convert them to thrown errors carrying statusCode 401 so the renderer's
+// existing 401 auto-authorize flow fires. The Databricks MCP proxy returns these
+// as HTTP-200 JSON-RPC errors with an embedded authorize URL — without this
+// translation, Mason silently records 0 tools and the user is stuck.
+function maybeThrowJsonRpcAuthError(payload: any): void {
+  if (!payload || !payload.error) return;
+  const msg = typeof payload.error.message === "string" ? payload.error.message : "";
+  const looksLikeAuth =
+    /please login first/i.test(msg) ||
+    /credential for user identity/i.test(msg) ||
+    /not authorized/i.test(msg);
+  if (!looksLikeAuth) return;
+  const err: any = new Error(`MCP 401: ${msg}`);
+  err.statusCode = 401;
+  // Pull the explicit authorize URL out of the message if present so the
+  // renderer can open it without having to reconstruct it.
+  const urlMatch = msg.match(/https:\/\/[^\s"']+\/explore\/connections\/[^\s"']+/);
+  if (urlMatch) err.authorizeUrl = urlMatch[0];
+  throw err;
 }
 
 ipcMain.handle("mcp-connect", async (_event: IpcMainInvokeEvent, { serverUrl, token }: { serverUrl: string; token: string }) => {
