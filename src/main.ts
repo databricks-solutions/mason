@@ -1774,15 +1774,28 @@ ipcMain.handle("list-uc-connections", async (_event: IpcMainInvokeEvent, { host,
       if (!pageToken) break;
     }
 
+    // Filter out HTTP connections that aren't MCP-speaking — many UC HTTP
+    // connections (Google Drive, SharePoint, GitHub Copilot API, Tavily REST,
+    // etc.) are credential-only OAuth shims for SaaS REST APIs. They share
+    // the HTTP connection_type but the MCP proxy at /api/2.0/mcp/external/
+    // returns 404 for them. The API surfaces this as is_mcp_connection.
+    // Keep connections where the field is missing (older workspaces /
+    // legacy connections that pre-date the flag) so we don't regress.
+    const isMcpConnection = (c: any): boolean => {
+      const v = c.is_mcp_connection ?? c.isMcpConnection;
+      if (v === undefined || v === null) return true;
+      if (typeof v === "string") return v.toLowerCase() !== "false";
+      return v !== false;
+    };
     const connections = allConnections
-      .filter((c) => c.connection_type === "HTTP")
+      .filter((c) => c.connection_type === "HTTP" && isMcpConnection(c))
       .map((c) => {
         const opts = c.options || c.properties || {};
         const rawHost = opts.host || opts.base_url || opts.host_url || opts.url || opts.endpoint || "";
         const directHost = rawHost ? rawHost.replace(/\/+$/, "") : "";
         return { name: c.name, comment: c.comment || "", directHost };
       });
-    console.log(`[UC] Found ${connections.length} HTTP connections (of ${allConnections.length} total)`);
+    console.log(`[UC] Found ${connections.length} MCP-capable HTTP connections (of ${allConnections.length} total)`);
     for (const c of connections) {
       console.log(`[UC]   - ${c.name} -> ${c.directHost || "(no host; will use UC proxy)"}`);
     }
