@@ -244,13 +244,19 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
       window.api.onChatChunk((chunk: any) => {
         if (firstChunk) {
           firstChunk = false;
-          removeThinking();
           clearWelcome();
           streamingEl = document.createElement("div");
           streamingEl.className = "msg assistant";
           streamingEl.style.whiteSpace = "pre-wrap";
           if (messagesEl) {
             messagesEl.appendChild(streamingEl);
+            // Keep the building-bricks indicator visible *below* the streaming
+            // bubble so users see "still working" even when chunks pause
+            // mid-stream (Opus 4.7 often pauses between paragraphs). The
+            // thinking div was appended earlier; move it after streamingEl
+            // so DOM order is text-then-bricks.
+            const thinking = document.getElementById("thinkingIndicator");
+            if (thinking) messagesEl.appendChild(thinking);
             messagesEl.scrollTop = messagesEl.scrollHeight;
           }
         }
