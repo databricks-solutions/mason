@@ -2054,7 +2054,14 @@ ipcMain.handle(
       }
     }
 
-    if (shouldStream) body.stream = true;
+    if (shouldStream) {
+      body.stream = true;
+      // Ask the upstream to include a final usage chunk in the SSE stream so
+      // we can log cache hits and total token counts. Without this, the
+      // streaming path never sees usage and we can't verify caching is
+      // actually engaging.
+      body.stream_options = { include_usage: true };
+    }
 
     // Anthropic prompt caching. Tool schemas dominate every turn (~16K tokens
     // for ~80 tools at ~200 tokens each). With cache_control on the last tool,
@@ -2142,6 +2149,19 @@ ipcMain.handle(
                   slot.function.arguments += tc.function.arguments;
                 }
               }
+            }
+            // The final stream chunk (when include_usage is set) carries
+            // usage stats with empty choices. Surface cache + token counts
+            // so we can confirm prompt caching is engaging.
+            if (chunk.usage) {
+              const u = chunk.usage;
+              const cReq = u.cache_creation_input_tokens;
+              const cRead = u.cache_read_input_tokens;
+              const inTok = u.input_tokens ?? u.prompt_tokens ?? "?";
+              const outTok = u.output_tokens ?? u.completion_tokens ?? "?";
+              console.log(
+                `[CHAT] Usage (streamed) — input: ${inTok}, output: ${outTok}, cache_created: ${cReq || 0}, cache_read: ${cRead || 0}`
+              );
             }
           } catch (_) {}
         }
