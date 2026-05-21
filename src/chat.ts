@@ -178,9 +178,16 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
       JSON.stringify(toolsForApi.map((t) => t.function.name))
     );
 
-  let maxIterations = 10;
+  // Agent-loop budget. 40 covers real-world polling-heavy patterns like
+  // waiting on a job run with periodic status checks plus several follow-up
+  // tool calls. When the loop exhausts the budget we surface a clear error
+  // below instead of silently returning to idle.
+  const ITERATION_BUDGET = 40;
+  let maxIterations = ITERATION_BUDGET;
+  let iterationsUsed = 0;
 
   while (maxIterations-- > 0) {
+    iterationsUsed += 1;
     const chatToken = await getAuthToken();
     const sel = modelEl.value;
     let chatGateway = getGatewayUrl();
@@ -554,4 +561,14 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
 
     break;
   }
+
+  // If we exit the loop without hitting `return` in the text branch, we
+  // either ran out of iteration budget mid-tool-loop or hit an unexpected
+  // result type. Tell the user clearly — silent stops at this point look
+  // like a hang.
+  const hitBudget = iterationsUsed >= ITERATION_BUDGET;
+  const message = hitBudget
+    ? `Agent loop hit the ${ITERATION_BUDGET}-step budget — the model was making tool calls but never produced a final answer. Send another message (e.g. "continue" or a more specific question) to keep going. If this happens repeatedly, break the task into smaller steps or narrow the toolset.`
+    : "Conversation ended unexpectedly. Send another message to continue.";
+  addMessageEl("error", message);
 }
