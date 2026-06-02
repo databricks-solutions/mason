@@ -71,6 +71,96 @@ function buildSkillsManifest(): string {
   return lines.join("\n");
 }
 
+// Return the largest position in `s` that's safe to feed to marked without
+// painting any in-progress markdown tokens. Used by the streaming typewriter
+// to hold back the trailing chars until their closing tokens arrive, so
+// users never see raw `## Heading` or unbalanced `**bold` mid-stream.
+//
+// Rules:
+//  • An unclosed ``` fence wins. Hold everything from the start of its line.
+//  • Otherwise, content above the last \n is block-complete (marked sees a
+//    finished line). Hold the in-progress line.
+//  • Inside the in-progress line, walk inline tokens (** * ` [ ![) and hold
+//    from the first unclosed open onwards.
+function safeMarkdownPos(s: string, isFinal: boolean): number {
+  if (isFinal) return s.length;
+
+  // 1. Code fence dominates. Odd fence count = inside an open fence.
+  const fences = [...s.matchAll(/^```/gm)];
+  if (fences.length % 2 === 1) {
+    return fences[fences.length - 1].index!;
+  }
+
+  // 2. Block boundary: render up to and including the last newline.
+  const lastNL = s.lastIndexOf("\n");
+  const headEnd = lastNL + 1; // 0 if no \n yet
+  const tail = s.slice(headEnd);
+
+  // 3. Inline scan over the trailing in-progress line.
+  return headEnd + safeInlinePos(tail);
+}
+
+function safeInlinePos(line: string): number {
+  // Stack tracks open inline tokens. lastSafe advances only when the stack
+  // is empty — i.e., when nothing is mid-token.
+  const stack: string[] = [];
+  let lastSafe = 0;
+  let i = 0;
+  while (i < line.length) {
+    const c = line[i];
+    if (c === "\\" && i + 1 < line.length) {
+      i += 2;
+      if (!stack.length) lastSafe = i;
+      continue;
+    }
+    if (c === "`") {
+      if (stack[stack.length - 1] === "c") {
+        stack.pop();
+        i++;
+        if (!stack.length) lastSafe = i;
+      } else {
+        stack.push("c");
+        i++;
+      }
+      continue;
+    }
+    if (c === "*") {
+      const bold = line[i + 1] === "*";
+      const mark = bold ? "b" : "i";
+      const step = bold ? 2 : 1;
+      if (stack[stack.length - 1] === mark) {
+        stack.pop();
+        i += step;
+        if (!stack.length) lastSafe = i;
+      } else {
+        stack.push(mark);
+        i += step;
+      }
+      continue;
+    }
+    if (c === "[" || (c === "!" && line[i + 1] === "[")) {
+      // Greedy lookahead for a complete ](url) — if found, consume the
+      // whole link; otherwise push and hold back.
+      const textStart = c === "!" ? i + 2 : i + 1;
+      const textEnd = line.indexOf("]", textStart);
+      if (textEnd !== -1 && line[textEnd + 1] === "(") {
+        const urlEnd = line.indexOf(")", textEnd + 2);
+        if (urlEnd !== -1) {
+          i = urlEnd + 1;
+          if (!stack.length) lastSafe = i;
+          continue;
+        }
+      }
+      stack.push("l");
+      i++;
+      continue;
+    }
+    i++;
+    if (!stack.length) lastSafe = i;
+  }
+  return lastSafe;
+}
+
 const MAX_TOOL_RESULT_CHARS = 256 * 1024;
 function capToolResult(text: string, toolName: string): string {
   if (text.length <= MAX_TOOL_RESULT_CHARS) return text;
@@ -233,12 +323,22 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
         if (typePos < typeQueue.length && streamingEl) {
           const batch = typeQueue.slice(typePos, typePos + 3);
           typePos += batch.length;
-          streamingEl.textContent = typeQueue.slice(0, typePos);
+          // Render progressively, but only up to the last position where all
+          // open markdown tokens are closed — so users never see raw
+          // `## Heading` or `**bold` mid-stream. Held-back chars drop into
+          // place on the tick where their closer arrives.
+          const partial = typeQueue.slice(0, typePos);
+          const stillStreaming = typePos < typeQueue.length;
+          const safeEnd = safeMarkdownPos(partial, !stillStreaming);
+          streamingEl.innerHTML = renderMarkdown(partial.slice(0, safeEnd));
           if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
           typeTimer = setTimeout(typeNext, 12);
         } else {
           typeRunning = false;
           typeTimer = null;
+          // Final paint: show everything, including any trailing line that
+          // never got a newline.
+          if (streamingEl) streamingEl.innerHTML = renderMarkdown(typeQueue);
         }
       }
       function ensureTyping(): void {
@@ -254,16 +354,18 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
           clearWelcome();
           streamingEl = document.createElement("div");
           streamingEl.className = "msg assistant";
-          streamingEl.style.whiteSpace = "pre-wrap";
           if (messagesEl) {
             messagesEl.appendChild(streamingEl);
             // Keep the building-bricks indicator visible *below* the streaming
             // bubble so users see "still working" even when chunks pause
-            // mid-stream (Opus 4.7 often pauses between paragraphs). The
-            // thinking div was appended earlier; move it after streamingEl
-            // so DOM order is text-then-bricks.
+            // mid-stream. Add `streaming` class so CSS hides the text label
+            // (the response itself is now the indicator) while the bricks
+            // keep stacking.
             const thinking = document.getElementById("thinkingIndicator");
-            if (thinking) messagesEl.appendChild(thinking);
+            if (thinking) {
+              thinking.classList.add("streaming");
+              messagesEl.appendChild(thinking);
+            }
             messagesEl.scrollTop = messagesEl.scrollHeight;
           }
         }
@@ -308,7 +410,6 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
         const messagesEl = mason.el.messages as HTMLElement | null;
         const sel = streamingEl as HTMLElement | null;
         if (sel) {
-          sel.style.whiteSpace = "";
           sel.innerHTML = renderMarkdown(streamedText);
           if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
         }
@@ -353,7 +454,6 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
       (mason.history as any[]).push({ role: "assistant", content });
       const sel = streamingEl as HTMLElement | null;
       if (sel) {
-        sel.style.whiteSpace = "";
         sel.innerHTML = renderMarkdown(content);
         if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
       } else {
@@ -371,7 +471,6 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
       const streamed = streamingEl as HTMLElement | null;
       if (streamed) {
         if (result.content) {
-          streamed.style.whiteSpace = "";
           streamed.innerHTML = renderMarkdown(result.content);
         } else {
           streamed.remove();

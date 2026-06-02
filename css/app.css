@@ -487,6 +487,9 @@
         opacity: 0.4;
         animation: thinkPulse 1.8s ease-in-out infinite;
       }
+      /* Once streaming starts, the response text IS the indicator —
+         hide the phrase but keep the bricks animating below. */
+      .thinking.streaming .thinking-label { display: none; }
       @keyframes thinkPulse {
         0%, 100% { opacity: 0.25; }
         50% { opacity: 0.5; }
