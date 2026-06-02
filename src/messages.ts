@@ -36,12 +36,12 @@ const THINKING_PHRASES = [
   "Thinking...",
   "Mixing mortar...",
   "Laying bricks...",
-  "Drawing up plans...",
-  "Measuring twice...",
-  "Cutting once...",
-  "Checking the blueprints...",
-  "Squaring the corners...",
-  "Stacking thoughts...",
+  "Untangling DAGs...",
+  "Sparking a repsonse...",
+  "Vacuuming up stragglers...",
+  "Z-ordering my priorities...",
+  "Tombstoning bad takes...",
+  "Time-traveling for answers...",
 ];
 
 function pickThinkingPhrase(): string {
