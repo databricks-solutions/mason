@@ -358,11 +358,14 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
             messagesEl.appendChild(streamingEl);
             // Keep the building-bricks indicator visible *below* the streaming
             // bubble so users see "still working" even when chunks pause
-            // mid-stream (Opus 4.7 often pauses between paragraphs). The
-            // thinking div was appended earlier; move it after streamingEl
-            // so DOM order is text-then-bricks.
+            // mid-stream. Add `streaming` class so CSS hides the text label
+            // (the response itself is now the indicator) while the bricks
+            // keep stacking.
             const thinking = document.getElementById("thinkingIndicator");
-            if (thinking) messagesEl.appendChild(thinking);
+            if (thinking) {
+              thinking.classList.add("streaming");
+              messagesEl.appendChild(thinking);
+            }
             messagesEl.scrollTop = messagesEl.scrollHeight;
           }
         }

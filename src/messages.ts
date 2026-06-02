@@ -28,11 +28,32 @@ function showWelcome(): void {
     </div>`;
 }
 
+// Phrases shown while waiting for the model to start streaming. Picked at
+// random on each showThinking() call. Add or edit entries here — keep them
+// short (~3 words) so the indicator stays compact.
+const THINKING_PHRASES = [
+  "Building...",
+  "Thinking...",
+  "Mixing mortar...",
+  "Laying bricks...",
+  "Drawing up plans...",
+  "Measuring twice...",
+  "Cutting once...",
+  "Checking the blueprints...",
+  "Squaring the corners...",
+  "Stacking thoughts...",
+];
+
+function pickThinkingPhrase(): string {
+  return THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
+}
+
 function showThinking(): void {
   clearWelcome();
   removeThinking();
   const messagesEl = mason.el.messages as HTMLElement | null;
   if (!messagesEl) return;
+  const phrase = pickThinkingPhrase();
   const div = document.createElement("div");
   div.className = "thinking";
   div.id = "thinkingIndicator";
@@ -42,7 +63,7 @@ function showThinking(): void {
       <div class="thinking-brick"></div>
       <div class="thinking-brick"></div>
     </div>
-    <span class="thinking-label">Building...</span>
+    <span class="thinking-label">${phrase}</span>
   `;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
