@@ -233,7 +233,12 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
         if (typePos < typeQueue.length && streamingEl) {
           const batch = typeQueue.slice(typePos, typePos + 3);
           typePos += batch.length;
-          streamingEl.textContent = typeQueue.slice(0, typePos);
+          // Render markdown progressively. marked + DOMPurify both handle
+          // partial input gracefully — incomplete tokens (`**bold tex`, an
+          // unclosed code fence) stay as text until the closing token lands,
+          // then upgrade on the next tick. If this becomes a CPU hotspot on
+          // long code-block-heavy responses, throttle to ~60ms ticks.
+          streamingEl.innerHTML = renderMarkdown(typeQueue.slice(0, typePos));
           if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
           typeTimer = setTimeout(typeNext, 12);
         } else {
@@ -254,7 +259,6 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
           clearWelcome();
           streamingEl = document.createElement("div");
           streamingEl.className = "msg assistant";
-          streamingEl.style.whiteSpace = "pre-wrap";
           if (messagesEl) {
             messagesEl.appendChild(streamingEl);
             // Keep the building-bricks indicator visible *below* the streaming
@@ -308,7 +312,6 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
         const messagesEl = mason.el.messages as HTMLElement | null;
         const sel = streamingEl as HTMLElement | null;
         if (sel) {
-          sel.style.whiteSpace = "";
           sel.innerHTML = renderMarkdown(streamedText);
           if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
         }
@@ -353,7 +356,6 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
       (mason.history as any[]).push({ role: "assistant", content });
       const sel = streamingEl as HTMLElement | null;
       if (sel) {
-        sel.style.whiteSpace = "";
         sel.innerHTML = renderMarkdown(content);
         if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
       } else {
@@ -371,7 +373,6 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
       const streamed = streamingEl as HTMLElement | null;
       if (streamed) {
         if (result.content) {
-          streamed.style.whiteSpace = "";
           streamed.innerHTML = renderMarkdown(result.content);
         } else {
           streamed.remove();
