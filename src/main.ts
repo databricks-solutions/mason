@@ -3,6 +3,13 @@ import { execSync, spawn, ChildProcess } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
+import {
+  applyAnthropicCaching,
+  consolidateSystemMessages,
+  flattenContent,
+  maxTokensFor,
+  supportsStreamOptions,
+} from "./chat-shared";
 
 try {
   // electron-reloader watches main.js paths; in dev mode it picks up our
@@ -127,46 +134,6 @@ function chatFetch(
   });
 }
 
-// Flatten a content field that might be a string, null, or an array of parts
-// (Gemini, some Anthropic responses, etc. return `content: [{type:"text", text:"..."}]`).
-// Without this, the renderer feeds an array to marked() and gets a confusing
-// "input parameter is of type [object Array], string expected" error.
-// Anthropic prompt-caching helper. Sets cache_control: {type: "ephemeral"}
-// breakpoints on the heaviest static portions of the prompt (tools + last
-// system message) so repeated turns within a 5-minute window read at ~10% of
-// the input cost. No-op for non-Claude models. Databricks AI Gateway passes
-// cache_control through to Anthropic; the response's usage.cache_read_input_tokens
-// surfaces whether a cache hit occurred (logged below).
-function applyAnthropicCaching(body: any, model: string): void {
-  if (typeof model !== "string") return;
-  if (!model.toLowerCase().includes("claude")) return;
-
-  // Mark the last tool. Anthropic caches everything up to and including the
-  // marked element, so a single breakpoint at the end covers all tools.
-  if (Array.isArray(body.tools) && body.tools.length > 0) {
-    const lastIdx = body.tools.length - 1;
-    body.tools[lastIdx] = {
-      ...body.tools[lastIdx],
-      cache_control: { type: "ephemeral" },
-    };
-  }
-
-  // Mark the last system message. Covers skills manifest + user system prompt
-  // + tool-aware nudge — everything stable before the dynamic chat history.
-  if (Array.isArray(body.messages)) {
-    let lastSystemIdx = -1;
-    for (let i = 0; i < body.messages.length; i++) {
-      if (body.messages[i]?.role === "system") lastSystemIdx = i;
-    }
-    if (lastSystemIdx >= 0) {
-      body.messages[lastSystemIdx] = {
-        ...body.messages[lastSystemIdx],
-        cache_control: { type: "ephemeral" },
-      };
-    }
-  }
-}
-
 // Sanitize tool_calls before returning to the renderer. Two failure modes:
 //   • Empty arguments: providers stream tools that take no params as
 //     function.arguments="" — the Databricks AI Gateway rejects that on the
@@ -197,23 +164,6 @@ function sanitizeToolCalls(toolCalls: any[]): any[] {
     if (!needsReset) return tc;
     return { ...tc, function: { ...tc.function, arguments: "{}" } };
   });
-}
-
-function flattenContent(c: any): string {
-  if (c == null) return "";
-  if (typeof c === "string") return c;
-  if (Array.isArray(c)) {
-    return c
-      .map((p) => {
-        if (typeof p === "string") return p;
-        if (p == null) return "";
-        if (typeof p.text === "string") return p.text;
-        if (typeof p.content === "string") return p.content;
-        return "";
-      })
-      .join("");
-  }
-  return String(c);
 }
 
 function sanitizeLog(str: string): string {
@@ -2043,31 +1993,42 @@ ipcMain.handle(
         const hasSystem = messages.some((m: any) => m.role === "system");
         body = {
           model,
-          max_tokens: 16384,
+          max_tokens: maxTokensFor(String(model)),
           messages: hasSystem ? messages : [systemMsg, ...messages],
           tools,
           tool_choice: "auto",
         };
         console.log(`[CHAT] Sending ${tools.length} tools: ${toolNames}`);
       } else {
-        body = { model, max_tokens: 16384, messages };
+        body = { model, max_tokens: maxTokensFor(String(model)), messages };
       }
     }
 
     if (shouldStream) {
       body.stream = true;
-      // Ask the upstream to include a final usage chunk in the SSE stream so
-      // we can log cache hits and total token counts. Without this, the
-      // streaming path never sees usage and we can't verify caching is
-      // actually engaging.
-      body.stream_options = { include_usage: true };
+      // Only ask for usage chunks from providers that accept the flag. Qwen
+      // and Llama 400 with "unknown field 'stream_options'" if we send it.
+      // Non-Claude streams don't carry cache_read anyway, so dropping the
+      // flag there costs nothing.
+      if (supportsStreamOptions(String(model))) {
+        body.stream_options = { include_usage: true };
+      }
+    }
+
+    // Gemini rejects more than one role:"system" message. Mason builds up to
+    // three (skills manifest + user systemPrompt + tool-aware nudge), so
+    // collapse to a single combined system message before send. Universally
+    // compatible; cache_control on "the last system message" still works
+    // since it's now the only one.
+    if (Array.isArray(body.messages)) {
+      body.messages = consolidateSystemMessages(body.messages);
     }
 
     // Anthropic prompt caching. Tool schemas dominate every turn (~16K tokens
     // for ~80 tools at ~200 tokens each). With cache_control on the last tool,
     // Anthropic caches the entire tools prefix for 5 minutes — subsequent
-    // turns within the cache window read at 10% of input cost. Also mark the
-    // last system message so the static instruction prefix gets cached too.
+    // turns within the cache window read at 10% of input cost. Also marks the
+    // (now consolidated) system message so the static prefix gets cached too.
     // OpenAI prefixes >1024 tokens cache automatically (no opt-in needed).
     // Gemini/Meta/Qwen have no standard caching API — leave untouched.
     applyAnthropicCaching(body, String(model));
