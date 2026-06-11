@@ -32,6 +32,15 @@
       <div class="dashboard-list" id="dashboardList"></div>
 
       <div class="sidebar-settings">
+        <button class="sidebar-designer-btn" id="designerBtn" title="Workflow Designer (Cmd+D)" aria-label="Open workflow designer">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="5" cy="6" r="2.6"/>
+            <circle cx="19" cy="6" r="2.6"/>
+            <circle cx="12" cy="18" r="2.6"/>
+            <path d="M7 7.5 10.5 16M17 7.5 13.5 16"/>
+          </svg>
+          <span>Workflow Designer</span>
+        </button>
         <label>Profile</label>
         <select id="profile"></select>
         <div class="settings-row">
@@ -162,6 +171,43 @@
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Workflow designer view (hidden by default) -->
+      <div class="designer-view" id="designerView">
+        <div class="designer-toolbar">
+          <select id="wfSelect" aria-label="Saved workflows"></select>
+          <input id="wfName" class="wf-name-input" type="text" placeholder="Workflow name" aria-label="Workflow name" spellcheck="false" />
+          <button class="wf-btn" id="wfAddCell" title="Add a cell (or double-click the canvas)">+ Cell</button>
+          <button class="wf-btn primary" id="wfRun">&#9654; Run</button>
+          <button class="wf-btn" id="wfSave" title="Save workflow">Save</button>
+          <button class="wf-btn" id="wfNew" title="New empty workflow">New</button>
+          <button class="wf-btn" id="wfTemplate" title="Insert the Spec → Implement → Test → Review template">Template</button>
+          <button class="wf-btn danger" id="wfDeleteBtn" title="Delete this workflow">Delete</button>
+          <span id="wfStatus" class="wf-status" role="status"></span>
+        </div>
+        <div class="designer-canvas-wrap" id="wfCanvasWrap">
+          <div class="designer-canvas" id="wfCanvas">
+            <svg id="wfEdgeSvg" class="designer-edges" viewBox="-10000 -10000 20000 20000" aria-hidden="true"></svg>
+          </div>
+        </div>
+        <div class="designer-drawer" id="wfDrawer">
+          <div class="designer-drawer-header">
+            <span id="wfDrawerTitle">Transcript</span>
+            <button class="wf-btn" id="wfDrawerToggle" aria-label="Toggle transcript drawer">&#8597;</button>
+          </div>
+          <div class="designer-drawer-body" id="wfDrawerBody"></div>
+        </div>
+        <!-- Per-cell tools modal -->
+        <div class="modal-overlay" id="wfToolsModal" role="dialog" aria-modal="true" aria-labelledby="wfToolsTitle">
+          <div class="modal">
+            <h3 id="wfToolsTitle">Tools</h3>
+            <div class="wf-tools-list" id="wfToolsList" style="max-height:400px;overflow-y:auto;margin-bottom:12px;"></div>
+            <div class="modal-btns">
+              <button class="modal-btn secondary" id="wfToolsClose">Close</button>
             </div>
           </div>
         </div>
@@ -427,7 +473,10 @@
     <script src="build/ts/mcp.js"></script>
     <script src="build/ts/dashboards.js"></script>
     <script src="build/ts/onboarding.js"></script>
+    <script src="build/ts/agent-runner.js"></script>
     <script src="build/ts/chat.js"></script>
+    <script src="build/ts/workflow-engine.js"></script>
+    <script src="build/ts/designer.js"></script>
     <script src="build/ts/app.js"></script>
   </body>
 </html>

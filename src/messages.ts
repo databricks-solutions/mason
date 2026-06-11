@@ -121,12 +121,16 @@ interface AskUserQuestion {
 // questions in sequence (single chat bubble — no round-trip to the model
 // between questions). Resolves with a JSON-stringified record of
 // { question: answer } pairs, or the literal "user_cancelled" if the user
-// cancels at any step.
-function renderQuestionCard(questions: AskUserQuestion[]): Promise<string> {
+// cancels at any step. `container` defaults to the chat messages pane; the
+// workflow designer passes its transcript drawer instead.
+function renderQuestionCard(
+  questions: AskUserQuestion[],
+  container?: HTMLElement
+): Promise<string> {
   return new Promise((resolve) => {
     removeThinking();
     clearWelcome();
-    const messagesEl = mason.el.messages as HTMLElement | null;
+    const messagesEl = container || (mason.el.messages as HTMLElement | null);
     const list = (questions || []).slice(0, 4);
     if (!messagesEl || list.length === 0) {
       resolve("user_cancelled");

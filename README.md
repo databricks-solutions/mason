@@ -6,6 +6,14 @@ Mason is a desktop application that leverages Databricks Unity AI Gateway and Un
   <img src="docs/model.gif" alt="Switching between Claude, GPT, Gemini, and Llama models in Mason" width="720">
 </p>
 
+## Agentic Workflow Designer
+
+Build multi-model agentic pipelines on a drag-and-drop canvas. Each **cell** picks a model, a subset of your connected tools, and a prompt; wire cells together with **flow** edges to pipe one cell's output into the next, or **feedback** edges to create bounded revision loops where a reviewer routes work back until it passes. Mix providers freely — a Fable cell can feed an Opus cell whose work a Sonnet cell validates — all through the same governed gateway.
+
+<p align="center">
+  <img src="docs/designer.png" alt="Mason's Agentic Workflow Designer: cells wired into a multi-model pipeline with feedback loops" width="720">
+</p>
+
 ## Installation
 
 ### macOS (Apple Silicon) — one-line install

@@ -70,6 +70,11 @@ const api: MasonApi = {
   settingsLoad: () => ipcRenderer.invoke("settings-load"),
   settingsSave: (partial) => ipcRenderer.invoke("settings-save", partial),
 
+  workflowList: () => ipcRenderer.invoke("workflow-list"),
+  workflowLoad: (id) => ipcRenderer.invoke("workflow-load", id),
+  workflowSave: (wf) => ipcRenderer.invoke("workflow-save", wf),
+  workflowDelete: (id) => ipcRenderer.invoke("workflow-delete", id),
+
   skillsList: () => ipcRenderer.invoke("skills-list"),
   skillsLoad: (slug) => ipcRenderer.invoke("skills-load", slug),
   skillsSave: (params) => ipcRenderer.invoke("skills-save", params),

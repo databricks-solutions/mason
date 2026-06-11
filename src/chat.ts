@@ -161,15 +161,6 @@ function safeInlinePos(line: string): number {
   return lastSafe;
 }
 
-const MAX_TOOL_RESULT_CHARS = 256 * 1024;
-function capToolResult(text: string, toolName: string): string {
-  if (text.length <= MAX_TOOL_RESULT_CHARS) return text;
-  return (
-    text.slice(0, MAX_TOOL_RESULT_CHARS) +
-    `\n\n[Truncated: ${toolName} returned ${text.length} chars, only first ${MAX_TOOL_RESULT_CHARS} kept. Ask for a more specific query or read in chunks.]`
-  );
-}
-
 function setGenerating(active: boolean): void {
   mason.generating = active;
   const sendBtn = mason.el.send as HTMLButtonElement | null;
@@ -193,6 +184,14 @@ async function send(): Promise<void> {
 
   if (!navigator.onLine) {
     addMessageEl("error", "You appear to be offline. Check your network connection.");
+    return;
+  }
+
+  if (mason.workflowRun?.running) {
+    addMessageEl(
+      "error",
+      "A workflow is currently running — stop it in the Workflow Designer before chatting."
+    );
     return;
   }
 
@@ -279,31 +278,10 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
   while (maxIterations-- > 0) {
     iterationsUsed += 1;
     const chatToken = await getAuthToken();
-    const sel = modelEl.value;
-    let chatGateway = getGatewayUrl();
-    let chatModel = sel;
-    let chatFormat: "chat" | "responses" | null = null;
-
-    if (sel.startsWith("custom:")) {
-      chatModel = sel.replace("custom:", "");
-      const ep = mason.customEndpoints.find((e) => e.modelId === chatModel);
-      if (ep) {
-        if (ep.gatewayUrl) chatGateway = ep.gatewayUrl;
-        chatFormat = ep.format || null;
-      }
-    } else {
-      for (const g of mason.discoveredModels) {
-        const m = g.models.find((x) => x.value === sel);
-        if (m) {
-          chatFormat = m.format || null;
-          const supportsResponses = m.apiTypes && m.apiTypes.includes("openai/v1/responses");
-          if (toolsForApi && toolsForApi.length > 0 && supportsResponses) {
-            chatFormat = "responses";
-          }
-          break;
-        }
-      }
-    }
+    const routing = resolveModelRouting(modelEl.value, !!(toolsForApi && toolsForApi.length > 0));
+    const chatGateway: string | null = routing.gateway || null;
+    const chatModel = routing.model;
+    const chatFormat: "chat" | "responses" = routing.format;
 
     // Stream chat completions regardless of tools — main.ts accumulates
     // tool_calls deltas now. Responses API stream format differs; keep it
@@ -495,37 +473,14 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
         // also skip the "Calling tool: …" announcement since they render their
         // own UI inline.
         if (toolName === "load_skill") {
-          try {
-            const slug = String(args.slug || "");
-            if (!slug) throw new Error("slug is required");
-            addMessageEl("tool-call", `Loading skill: ${slug}`);
-            const skill = (await window.api.skillsLoad(slug)) as
-              | { slug: string; name: string; description: string; body: string }
-              | null;
-            if (!skill) {
-              (mason.history as any[]).push({
-                role: "tool",
-                tool_call_id: tc.id,
-                name: toolName,
-                content: `Error: skill "${slug}" not found.`,
-              });
-            } else {
-              const content = `# ${skill.name}\n\n${skill.body}`;
-              (mason.history as any[]).push({
-                role: "tool",
-                tool_call_id: tc.id,
-                name: toolName,
-                content: capToolResult(content, toolName),
-              });
-            }
-          } catch (e) {
-            (mason.history as any[]).push({
-              role: "tool",
-              tool_call_id: tc.id,
-              name: toolName,
-              content: `Error: ${(e as Error).message}`,
-            });
-          }
+          addMessageEl("tool-call", `Loading skill: ${String(args.slug || "")}`);
+          const r = await executeToolCore(toolName, args);
+          (mason.history as any[]).push({
+            role: "tool",
+            tool_call_id: tc.id,
+            name: toolName,
+            content: r.content,
+          });
           continue;
         }
 
@@ -574,83 +529,21 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
         // stuck.
         showThinking();
 
-        if (BUILTIN_TOOL_NAMES.has(toolName)) {
-          try {
-            const toolResult = (await window.api.builtinToolCall({ toolName, args })) as any;
-            const resultText = capToolResult(JSON.stringify(toolResult), toolName);
-            (mason.history as any[]).push({
-              role: "tool",
-              tool_call_id: tc.id,
-              name: toolName,
-              content: resultText,
-            });
-            const preview =
-              toolResult?.message ||
-              (typeof toolResult?.content === "string" && toolResult.content.slice(0, 200)) ||
-              resultText;
-            addMessageEl("tool-call", `${toolName}: ${preview}`);
-          } catch (e) {
-            (mason.history as any[]).push({
-              role: "tool",
-              tool_call_id: tc.id,
-              name: toolName,
-              content: `Error: ${(e as Error).message}`,
-            });
-            addMessageEl("error", `Tool error (${toolName}): ${(e as Error).message}`);
-          }
-          continue;
-        }
-
-        const server = findMcpServerForTool(toolName);
-        if (!server) {
-          (mason.history as any[]).push({
-            role: "tool",
-            tool_call_id: tc.id,
-            name: toolName,
-            content: "Error: no MCP server found for this tool",
-          });
-          continue;
-        }
-
-        try {
-          let toolResult: any;
-          if (server.type === "stdio") {
-            toolResult = await window.api.mcpStdioCallTool({
-              key: server.key!,
-              toolName,
-              args,
-            });
-          } else {
-            const mcpToken = await getAuthToken();
-            toolResult = await window.api.mcpCallTool({
-              serverUrl: server.url!,
-              token: mcpToken,
-              toolName,
-              args,
-            });
-          }
-          const rawText = toolResult?.content
-            ? toolResult.content.map((c: any) => c.text || JSON.stringify(c)).join("\n")
-            : JSON.stringify(toolResult);
-          const resultText = capToolResult(rawText, toolName);
-          (mason.history as any[]).push({
-            role: "tool",
-            tool_call_id: tc.id,
-            name: toolName,
-            content: resultText,
-          });
+        const isBuiltin = BUILTIN_TOOL_NAMES.has(toolName);
+        const r = await executeToolCore(toolName, args);
+        (mason.history as any[]).push({
+          role: "tool",
+          tool_call_id: tc.id,
+          name: toolName,
+          content: r.content,
+        });
+        if (r.ok) {
           addMessageEl(
             "tool-call",
-            `${toolName} result: ${resultText.slice(0, 200)}${resultText.length > 200 ? "..." : ""}`
+            isBuiltin ? `${toolName}: ${r.preview}` : `${toolName} result: ${r.preview}`
           );
-        } catch (e) {
-          (mason.history as any[]).push({
-            role: "tool",
-            tool_call_id: tc.id,
-            name: toolName,
-            content: `Error: ${(e as Error).message}`,
-          });
-          addMessageEl("error", `Tool error (${toolName}): ${(e as Error).message}`);
+        } else if (r.content !== "Error: no MCP server found for this tool") {
+          addMessageEl("error", `Tool error (${toolName}): ${r.preview}`);
         }
       }
 
