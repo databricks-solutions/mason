@@ -22,6 +22,7 @@ const path = require("path");
 const {
   applyAnthropicCaching,
   consolidateSystemMessages,
+  flattenContent,
   maxTokensFor,
   supportsStreamOptions,
 } = require("../build/ts/chat-shared");
@@ -201,17 +202,21 @@ async function runOne(host, token, model, scenario) {
         error: `HTTP ${res.status}: ${text.slice(0, 200)}`,
       };
     }
-    // Drain the stream so the test is realistic. We don't render anything;
-    // just confirm the stream completes without an error frame.
+    // Drain the stream. Parse SSE chunks and accumulate content the way
+    // main.ts does (via flattenContent) so we catch shape regressions —
+    // notably Qwen 3.5 122B which streams `delta.content` as an array of
+    // content parts. Without flattening, JS coerces it to "[object Object]"
+    // in the chat window.
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
+    let assembled = "";
+    let sawArrayContent = false;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
-      // Look for an obvious error in the stream
-      if (buf.includes('"error"')) {
+      if (buf.includes('"error"') && !buf.includes('"error_code":null')) {
         return {
           model: model.value,
           scenario: scenario.name,
@@ -219,8 +224,36 @@ async function runOne(host, token, model, scenario) {
           error: `Stream contained error: ${buf.slice(0, 200)}`,
         };
       }
+      let nl;
+      while ((nl = buf.indexOf("\n")) !== -1) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6);
+        if (data === "[DONE]") break;
+        try {
+          const chunk = JSON.parse(data);
+          const delta = chunk.choices?.[0]?.delta;
+          if (delta?.content != null) {
+            if (Array.isArray(delta.content)) sawArrayContent = true;
+            const piece =
+              typeof delta.content === "string"
+                ? delta.content
+                : flattenContent(delta.content);
+            assembled += piece;
+          }
+        } catch (_) {}
+      }
     }
-    return { model: model.value, scenario: scenario.name, ok: true };
+    if (assembled.includes("[object Object]")) {
+      return {
+        model: model.value,
+        scenario: scenario.name,
+        ok: false,
+        error: `Assembled content contains "[object Object]" — main.ts is not flattening delta.content (sawArrayContent=${sawArrayContent}).`,
+      };
+    }
+    return { model: model.value, scenario: scenario.name, ok: true, sawArrayContent };
   } catch (e) {
     return {
       model: model.value,
@@ -249,7 +282,8 @@ function printReport(results) {
         console.log(`    · ${r.scenario.padEnd(20)} skipped (${r.skip})`);
       } else if (r.ok) {
         totalOk++;
-        console.log(`    ✓ ${r.scenario}`);
+        const note = r.sawArrayContent ? " (array-shaped delta.content)" : "";
+        console.log(`    ✓ ${r.scenario}${note}`);
       } else {
         totalFail++;
         console.log(`    ✗ ${r.scenario.padEnd(20)} ${r.error}`);

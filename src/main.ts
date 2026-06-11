@@ -2090,8 +2090,18 @@ ipcMain.handle(
             const chunk = JSON.parse(data);
             const delta = chunk.choices?.[0]?.delta;
             if (delta?.content) {
-              fullContent += delta.content;
-              if (win) win.webContents.send("chat-chunk", delta.content);
+              // Some providers (Qwen 3.5 122B on Databricks Gateway) stream
+              // delta.content as an array of content parts instead of a
+              // string. Coerce via flattenContent so we never `+=` an array
+              // onto a string (that yields literal "[object Object]").
+              const piece =
+                typeof delta.content === "string"
+                  ? delta.content
+                  : flattenContent(delta.content);
+              if (piece) {
+                fullContent += piece;
+                if (win) win.webContents.send("chat-chunk", piece);
+              }
             }
             if (Array.isArray(delta?.tool_calls)) {
               for (const tc of delta.tool_calls) {
