@@ -231,7 +231,15 @@ function dsgModelOptions(selected: string): string {
 function dsgStatusInfo(cellId: string): { label: string; cls: string } {
   const rec = mason.workflowRun?.cells[cellId];
   const status: CellRunStatus = rec?.status || "idle";
-  return { label: status, cls: `wf-status-${status}` };
+  // Surface feedback-loop progress ("running 3/5") once a cell is on its
+  // second iteration so loops are visibly bounded.
+  let label: string = status;
+  if (rec && rec.iterations > 1) {
+    const cell = dsgWf()?.cells.find((c) => c.id === cellId);
+    const cap = cell?.maxLoopIterations || 5;
+    label = `${status} ${Math.min(rec.iterations, cap)}/${cap}`;
+  }
+  return { label, cls: `wf-status-${status}` };
 }
 
 function renderCell(cell: WorkflowCellConfig): void {
@@ -250,6 +258,10 @@ function renderCell(cell: WorkflowCellConfig): void {
       <select class="wf-cell-model" aria-label="Model"></select>
       <div class="wf-cell-toolsrow">
         <button class="wf-cell-tools-btn"></button>
+        <label class="wf-cell-loopcap" title="Max feedback revisions for this cell — when reached, the reviewing cell must choose a different route or end">
+          <span aria-hidden="true">&#8635;</span>
+          <input type="number" min="1" max="20" aria-label="Max feedback revisions" />
+        </label>
         <span class="wf-cell-status"></span>
       </div>
       <textarea class="wf-cell-prompt" rows="3" placeholder="Prompt — role, goals, instructions for this cell…" spellcheck="false"></textarea>
@@ -271,6 +283,17 @@ function renderCell(cell: WorkflowCellConfig): void {
   modelEl2.value = cell.model.value;
   const toolsBtn = el.querySelector(".wf-cell-tools-btn") as HTMLButtonElement;
   toolsBtn.textContent = `⚒ ${cell.enabledTools.length} tool${cell.enabledTools.length === 1 ? "" : "s"}`;
+  // The loop cap only matters when something feeds back into this cell —
+  // hide the control otherwise to keep cards quiet.
+  const loopWrap = el.querySelector(".wf-cell-loopcap") as HTMLElement;
+  const isFeedbackTarget = !!dsgWf()?.edges.some(
+    (e) => e.to === cell.id && e.kind === "feedback"
+  );
+  loopWrap.style.display = isFeedbackTarget ? "" : "none";
+  const loopInput = loopWrap.querySelector("input") as HTMLInputElement;
+  if (document.activeElement !== loopInput) {
+    loopInput.value = String(cell.maxLoopIterations || 5);
+  }
   const promptEl = el.querySelector(".wf-cell-prompt") as HTMLTextAreaElement;
   if (document.activeElement !== promptEl) promptEl.value = cell.prompt;
   const statusEl = el.querySelector(".wf-cell-status") as HTMLElement;
@@ -361,6 +384,18 @@ function dsgWireCell(el: HTMLElement, cellId: string): void {
 
   (el.querySelector(".wf-cell-tools-btn") as HTMLButtonElement).addEventListener("click", () =>
     openCellToolsModal(cellId)
+  );
+
+  (el.querySelector(".wf-cell-loopcap input") as HTMLInputElement).addEventListener(
+    "change",
+    (e) => {
+      const cell = cellOf();
+      if (!cell) return;
+      const v = parseInt((e.target as HTMLInputElement).value, 10);
+      cell.maxLoopIterations = Number.isFinite(v) ? Math.min(20, Math.max(1, v)) : 5;
+      (e.target as HTMLInputElement).value = String(cell.maxLoopIterations);
+      dsgMarkDirty();
+    }
   );
 
   // Edge creation from the output port.
@@ -492,6 +527,9 @@ function dsgStartEdgeDrag(fromCellId: string, e: MouseEvent): void {
     wf.edges.push({ id: genId(), from: fromCellId, to, kind });
     dsgMarkDirty();
     redrawEdges();
+    // A new feedback edge reveals the target's loop-cap control.
+    const toCell = wf.cells.find((c) => c.id === to);
+    if (toCell) renderCell(toCell);
   };
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
@@ -501,10 +539,14 @@ function dsgStartEdgeDrag(fromCellId: string, e: MouseEvent): void {
 function dsgDeleteSelectedEdge(): void {
   const wf = dsgWf();
   if (!wf || !dsgSelectedEdgeId || dsgRunning()) return;
+  const removed = wf.edges.find((e) => e.id === dsgSelectedEdgeId);
   wf.edges = wf.edges.filter((e) => e.id !== dsgSelectedEdgeId);
   dsgSelectedEdgeId = null;
   dsgMarkDirty();
   redrawEdges();
+  // Removing a feedback edge may hide the target's loop-cap control.
+  const toCell = removed && wf.cells.find((c) => c.id === removed.to);
+  if (toCell) renderCell(toCell);
 }
 
 // Floating inline input for edge labels (window.prompt doesn't exist in

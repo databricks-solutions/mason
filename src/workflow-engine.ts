@@ -140,7 +140,8 @@ interface FeedbackPayload {
 function buildCellPreamble(
   wf: MasonWorkflow,
   cell: WorkflowCellConfig,
-  routes: Array<{ key: string; edge: WorkflowEdge }> | null
+  routes: Array<{ key: string; edge: WorkflowEdge }> | null,
+  runState: WorkflowRunState | null
 ): string {
   const lines: string[] = [
     `You are the cell "${cell.name}" in the agentic workflow "${wf.name}".`,
@@ -158,11 +159,22 @@ function buildCellPreamble(
       `When your work is complete you MUST call the "${ROUTE_TOOL_NAME}" tool exactly once to decide where the workflow goes next. Available routes:`
     );
     for (const r of routes) {
-      const target = wfCellById(wf, r.edge.to)?.name || r.edge.to;
-      const kind = r.edge.kind === "feedback" ? "send feedback back to" : "hand off to";
-      lines.push(`  - "${r.key}": ${kind} the "${target}" cell`);
+      const target = wfCellById(wf, r.edge.to);
+      const targetName = target?.name || r.edge.to;
+      if (r.edge.kind === "feedback" && target) {
+        const cap = target.maxLoopIterations || WORKFLOW_DEFAULT_LOOP_CAP;
+        const used = runState?.cells[target.id]?.iterations || 0;
+        lines.push(
+          `  - "${r.key}": send feedback back to the "${targetName}" cell (revision ${used} of ${cap} used — after ${cap} this route closes)`
+        );
+      } else {
+        lines.push(`  - "${r.key}": hand off to the "${targetName}" cell`);
+      }
     }
     lines.push(`  - "end": the workflow is complete; provide a final summary in notes`);
+    lines.push(
+      `Feedback loops are bounded — do not chase perfection. Judge against a concrete bar: once the work meets it, move forward or end. Reserve feedback routes for specific, fixable problems, and make each piece of feedback materially different from the last.`
+    );
     lines.push(`Do not end your turn without calling ${ROUTE_TOOL_NAME}.`);
   }
   return lines.join("\n");
@@ -173,22 +185,31 @@ function buildCellMessages(
   cell: WorkflowCellConfig,
   delivered: Map<string, string>,
   feedback: FeedbackPayload | null,
-  routes: Array<{ key: string; edge: WorkflowEdge }> | null
+  routes: Array<{ key: string; edge: WorkflowEdge }> | null,
+  runState: WorkflowRunState | null
 ): any[] {
   const messages: any[] = [];
   if (cell.prompt.trim()) messages.push({ role: "system", content: cell.prompt.trim() });
-  messages.push({ role: "system", content: buildCellPreamble(wf, cell, routes) });
+  messages.push({ role: "system", content: buildCellPreamble(wf, cell, routes, runState) });
 
   const sections: string[] = [];
   for (const e of wfFlowEdges(wf)) {
     if (e.to !== cell.id) continue;
     const payload = delivered.get(e.id);
     if (payload === undefined) continue;
-    sections.push(`## Input from "${wfInputLabel(wf, e)}"\n\n${payload}`);
+    // Annotate revised work with its revision count so gates feel the
+    // convergence pressure ("revision 4 of 5" reads very differently from a
+    // first draft).
+    const source = wfCellById(wf, e.from);
+    const srcIters = (source && runState?.cells[source.id]?.iterations) || 0;
+    const srcCap = source?.maxLoopIterations || WORKFLOW_DEFAULT_LOOP_CAP;
+    const revNote = srcIters > 1 ? ` (revision ${srcIters} of ${srcCap})` : "";
+    sections.push(`## Input from "${wfInputLabel(wf, e)}"${revNote}\n\n${payload}`);
   }
   if (feedback) {
+    const cap = cell.maxLoopIterations || WORKFLOW_DEFAULT_LOOP_CAP;
     sections.push(
-      `## Feedback from "${feedback.fromCell}" (iteration ${feedback.iteration})\n\n${feedback.notes}`
+      `## Feedback from "${feedback.fromCell}" (revision ${feedback.iteration} of ${cap})\n\n${feedback.notes}`
     );
     if (feedback.prevOutput) {
       sections.push(`## Your previous output\n\n${feedback.prevOutput}`);
@@ -531,7 +552,7 @@ async function runWorkflow(wf: MasonWorkflow, cb: EngineCallbacks): Promise<Work
 
       const feedback = pendingFeedback.get(next.id) || null;
       pendingFeedback.delete(next.id);
-      const messages = buildCellMessages(wf, next, delivered, feedback, routes);
+      const messages = buildCellMessages(wf, next, delivered, feedback, routes, state);
 
       console.log(
         `[WORKFLOW] Cell "${next.name}" running (model ${next.model.value}, ${next.enabledTools.length} tools${isGate ? ", gate" : ""}${feedback ? `, iteration ${rec.iterations}` : ""})`

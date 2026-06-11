@@ -1421,3 +1421,25 @@
       body.dark .wf-tools-row:hover { background: rgba(255,255,255,0.04); }
       .wf-tools-name { font-family: ui-monospace, Menlo, monospace; font-size: 0.74rem; }
       .wf-tools-desc { opacity: 0.45; font-size: 0.72rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+      /* Per-cell feedback loop cap */
+      .wf-cell-loopcap {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        font-size: 0.74rem;
+        opacity: 0.75;
+        cursor: help;
+      }
+      .wf-cell-loopcap input {
+        width: 34px;
+        padding: 2px 4px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        font-size: 0.72rem;
+        background: #fff;
+        color: #333;
+        outline: none;
+        text-align: center;
+      }
+      body.dark .wf-cell-loopcap input { background: #1d1d1d; border-color: #3a3a3a; color: #ccc; }
