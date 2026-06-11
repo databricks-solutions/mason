@@ -97,7 +97,13 @@ declare global {
     settings: MasonSettings;
     systemPrompt: string;
 
-    currentView: "chat" | "dashboards" | "dashboard-detail" | "settings" | "onboarding";
+    currentView:
+      | "chat"
+      | "dashboards"
+      | "dashboard-detail"
+      | "settings"
+      | "onboarding"
+      | "designer";
     dashboardsList: MasonDashboard[];
     dashboardsLoading?: boolean;
     autoConnectDone: boolean;
@@ -105,6 +111,12 @@ declare global {
     skills: MasonSkillSummary[];
     disabledSkills: Set<string>;
     autoLoadSkills: boolean;
+
+    // Workflow designer
+    workflows: MasonWorkflowSummary[];
+    currentWorkflow: MasonWorkflow | null;
+    workflowRun: WorkflowRunState | null;
+    workflowDirty: boolean;
 
     defaultModel?: { value: string; label: string } | null;
 

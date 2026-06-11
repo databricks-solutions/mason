@@ -38,6 +38,12 @@ window.mason = {
   disabledSkills: new Set<string>(),
   autoLoadSkills: true,
 
+  // Workflow designer
+  workflows: [],
+  currentWorkflow: null,
+  workflowRun: null,
+  workflowDirty: false,
+
   // DOM refs (populated on init)
   el: {},
 };

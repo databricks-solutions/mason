@@ -1,6 +1,6 @@
 {
   "name": "mason",
-  "version": "1.4.3",
+  "version": "1.5.0",
   "description": "Desktop chat app for Databricks AI Gateway with MCP tool calling",
   "author": "Databricks",
   "main": "build/ts/main.js",
@@ -14,7 +14,8 @@
     "build:mac": "npm run build:ts && electron-builder --mac",
     "build:win": "npm run build:ts && electron-builder --win",
     "build:linux": "npm run build:ts && electron-builder --linux",
-    "dist": "npm run build:ts && electron-builder --publish never"
+    "dist": "npm run build:ts && electron-builder --publish never",
+    "test:models": "npm run build:ts && node scripts/test-models.js"
   },
   "devDependencies": {
     "electron": "33.4.11",

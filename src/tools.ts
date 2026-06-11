@@ -108,14 +108,17 @@ const BUILTIN_TOOL_NAMES = new Set(BUILTIN_TOOLS.map((t) => t.function.name));
 // these inline so they can render UI and await user input.
 const RENDERER_BUILTIN_TOOL_NAMES = new Set(["ask_user", "load_skill"]);
 
-function getAllToolDefs(): ToolDef[] {
-  const tools: ToolDef[] = BUILTIN_TOOLS.filter(
-    (t) => !mason.disabledTools.has(t.function.name)
-  );
+// Without an allowlist: every tool the user hasn't globally disabled (chat
+// behavior). With an allowlist (workflow cells): only tools that are both
+// available and named in the set — per-cell narrowing, never widening.
+function getAllToolDefs(allowlist?: Set<string>): ToolDef[] {
+  const allowed = (name: string): boolean =>
+    allowlist ? allowlist.has(name) : !mason.disabledTools.has(name);
+  const tools: ToolDef[] = BUILTIN_TOOLS.filter((t) => allowed(t.function.name));
   for (const server of mason.mcpServers) {
     const serverTools = (server.tools || []) as McpToolDescriptor[];
     for (const tool of serverTools) {
-      if (mason.disabledTools.has(tool.name)) continue;
+      if (!allowed(tool.name)) continue;
       tools.push({
         type: "function",
         function: {

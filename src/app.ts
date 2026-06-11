@@ -879,6 +879,12 @@ function initEventListeners(): void {
   (el.settingsBtn as HTMLElement | null)?.addEventListener("click", () => switchToSettingsView());
   (el.settingsViewClose as HTMLElement | null)?.addEventListener("click", () => switchToChatsTab());
 
+  // Workflow designer (toggles back to chat when already open)
+  document.getElementById("designerBtn")?.addEventListener("click", () => {
+    if (mason.currentView === "designer") switchToChatsTab();
+    else switchToDesignerView();
+  });
+
   // Update modal
   const updateModal = el.updateModal as HTMLElement | null;
   const updateLatest = el.updateLatest as HTMLElement | null;
@@ -1258,6 +1264,8 @@ function initEventListeners(): void {
     mason.autoConnectDone = false;
     await autoConnectMcp();
     if (mason.currentView === "dashboards") loadDashboards();
+    // Re-validate workflow cell models against the new workspace's model list.
+    designerOnProfileSwitch();
   });
 
   // Chat send
@@ -1288,6 +1296,11 @@ function initEventListeners(): void {
     if (mod && e.key === "b") {
       e.preventDefault();
       (el.sidebar as HTMLElement | null)?.classList.toggle("hidden");
+    }
+    if (mod && e.key === "d") {
+      e.preventDefault();
+      if (mason.currentView === "designer") switchToChatsTab();
+      else switchToDesignerView();
     }
     if (e.key === "Escape") {
       popup?.classList.remove("open");

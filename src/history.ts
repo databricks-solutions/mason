@@ -5,6 +5,7 @@ declare function selectModelByValue(value: string): void;
 declare function renderMessages(): void;
 declare function newChat(): void;
 declare function genId(): string;
+declare function switchToChatsTab(): void;
 
 interface HistoryListItem {
   id: string;
@@ -39,6 +40,9 @@ async function loadChat(id: string): Promise<void> {
     | { id: string; title?: string; model?: string; messages: unknown[] }
     | null;
   if (!data) return;
+  // Loading a chat while the designer is open should land the user back in
+  // the chat pane, like newChat() does.
+  if (mason.currentView === "designer") switchToChatsTab();
   mason.currentChatId = id;
   mason.history = data.messages;
   // Only restore the saved model if this workspace actually has it.
