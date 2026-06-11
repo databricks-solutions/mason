@@ -202,6 +202,12 @@ export interface MasonSkillsConfig {
   autoLoadSkills: boolean;
 }
 
+export interface WorkflowSummary {
+  id: string;
+  name: string;
+  updatedAt: number;
+}
+
 export interface MasonApi {
   // Streaming chat chunk listener
   onChatChunk(callback: (chunk: ChatChunk) => void): void;
@@ -287,6 +293,12 @@ export interface MasonApi {
   uninstallDevkit(): Promise<{ ok: boolean; error?: string }>;
   onDevkitInstallProgress(callback: (payload: DevkitInstallProgress) => void): void;
   removeDevkitInstallListeners(): void;
+
+  // Workflow designer
+  workflowList(): Promise<WorkflowSummary[]>;
+  workflowLoad(id: string): Promise<unknown>;
+  workflowSave(wf: unknown): Promise<{ ok: boolean; error?: string }>;
+  workflowDelete(id: string): Promise<{ ok: boolean }>;
 
   // Skills
   skillsList(): Promise<MasonSkillSummary[]>;

@@ -187,6 +187,14 @@ async function send(): Promise<void> {
     return;
   }
 
+  if (mason.workflowRun?.running) {
+    addMessageEl(
+      "error",
+      "A workflow is currently running — stop it in the Workflow Designer before chatting."
+    );
+    return;
+  }
+
   const profile = getSelectedProfile();
   if (!profile) {
     addMessageEl("error", "Select a Databricks profile in the sidebar.");

@@ -11,6 +11,7 @@ declare function renderProfilesList(): void;
 declare function refreshSkillsState(): Promise<void>;
 declare function renderSkillsSettingsList(): void;
 declare function updateSkillsAutoLoadVisual(): void;
+declare function hideDesignerView(): void;
 
 function elAs<T extends HTMLElement>(key: string): T | null {
   return mason.el[key] as T | null;
@@ -39,6 +40,7 @@ function switchToChatsTab(): void {
   const settingsClose = elAs<HTMLElement>("settingsViewClose");
   if (settingsClose) settingsClose.style.display = "none";
   elAs<HTMLElement>("onboardingView")?.classList.remove("visible");
+  hideDesignerView();
 }
 
 function switchToDashboardsTab(): void {
@@ -63,6 +65,7 @@ function switchToDashboardsTab(): void {
   elAs<HTMLElement>("settingsView")?.classList.remove("visible");
   const settingsClose = elAs<HTMLElement>("settingsViewClose");
   if (settingsClose) settingsClose.style.display = "none";
+  hideDesignerView();
   loadDashboards();
 }
 
@@ -82,6 +85,7 @@ function switchToSettingsView(): void {
   const settingsClose = elAs<HTMLElement>("settingsViewClose");
   if (settingsClose) settingsClose.style.display = "inline-block";
   elAs<HTMLElement>("onboardingView")?.classList.remove("visible");
+  hideDesignerView();
   if (typeof renderProfilesList === "function") renderProfilesList();
   if (typeof refreshSkillsState === "function") {
     refreshSkillsState().then(() => {

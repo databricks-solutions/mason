@@ -1066,3 +1066,358 @@
 
       /* Notes block in update modal */
       body.dark #updateNotes { background: rgba(255,255,255,0.05); }
+
+      /* ============================================================
+         Workflow Designer
+         ============================================================ */
+
+      .sidebar-designer-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        background: none;
+        color: inherit;
+        font-size: 0.82rem;
+        cursor: pointer;
+        width: 100%;
+        transition: background 0.2s, border-color 0.2s;
+      }
+      .sidebar-designer-btn:hover { background: rgba(0,0,0,0.04); border-color: #aaa; }
+      .sidebar-designer-btn.active { border-color: #ff3621; color: #ff3621; }
+      body.dark .sidebar-designer-btn { border-color: #444; }
+      body.dark .sidebar-designer-btn:hover { background: rgba(255,255,255,0.04); border-color: #666; }
+      body.dark .sidebar-designer-btn.active { border-color: #ff3621; color: #ff6a5b; }
+
+      .designer-view {
+        display: none;
+        flex: 1;
+        flex-direction: column;
+        width: 100%;
+        min-height: 0;
+        position: relative;
+      }
+      .designer-view.visible { display: flex; }
+
+      .designer-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px;
+        border-bottom: 1px solid #e8e8e8;
+        flex-wrap: wrap;
+      }
+      body.dark .designer-toolbar { border-color: #2a2a2a; }
+      .designer-toolbar select,
+      .wf-name-input {
+        padding: 6px 10px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        font-size: 0.82rem;
+        background: #fff;
+        color: #333;
+        outline: none;
+      }
+      .wf-name-input { flex: 0 1 220px; font-weight: 600; }
+      .wf-name-input:focus { border-color: #007aff; }
+      body.dark .designer-toolbar select,
+      body.dark .wf-name-input { background: #222; border-color: #3a3a3a; color: #ccc; }
+
+      .wf-btn {
+        padding: 6px 12px;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        background: none;
+        color: inherit;
+        font-size: 0.82rem;
+        cursor: pointer;
+        transition: background 0.2s, border-color 0.2s;
+        white-space: nowrap;
+      }
+      .wf-btn:hover { background: rgba(0,0,0,0.04); border-color: #aaa; }
+      body.dark .wf-btn { border-color: #444; }
+      body.dark .wf-btn:hover { background: rgba(255,255,255,0.05); }
+      .wf-btn.primary { background: #ff3621; border-color: #ff3621; color: #fff; font-weight: 600; }
+      .wf-btn.primary:hover { background: #e62f1c; }
+      .wf-btn.primary.running { background: #555; border-color: #555; }
+      .wf-btn.danger:hover { border-color: #c00; color: #c00; }
+      .wf-btn.dirty::after { content: " •"; color: #ff3621; }
+
+      .wf-status { font-size: 0.78rem; opacity: 0.6; margin-left: auto; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wf-status.error { color: #c00; opacity: 1; }
+      body.dark .wf-status.error { color: #ff6a5b; }
+
+      .designer-canvas-wrap {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+        min-height: 0;
+        cursor: grab;
+        background-color: #fafafa;
+        background-image: radial-gradient(circle, rgba(0,0,0,0.13) 1px, transparent 1px);
+        background-size: 22px 22px;
+      }
+      .designer-canvas-wrap:active { cursor: grabbing; }
+      body.dark .designer-canvas-wrap {
+        background-color: #161616;
+        background-image: radial-gradient(circle, rgba(255,255,255,0.09) 1px, transparent 1px);
+      }
+      .designer-canvas {
+        position: absolute;
+        top: 0; left: 0;
+        width: 0; height: 0;
+        transform-origin: 0 0;
+      }
+      .designer-edges {
+        position: absolute;
+        left: -10000px;
+        top: -10000px;
+        width: 20000px;
+        height: 20000px;
+        overflow: visible;
+        pointer-events: none;
+      }
+      .wf-edge {
+        fill: none;
+        stroke: #9aa3ad;
+        stroke-width: 2;
+        pointer-events: none;
+      }
+      .wf-edge.selected { stroke: #007aff; stroke-width: 3; }
+      .wf-edge-feedback { stroke: #ff3621; stroke-dasharray: 7 5; }
+      .wf-edge-feedback.selected { stroke: #ff3621; stroke-width: 3.5; }
+      .wf-edge-ghost { stroke: #007aff; stroke-dasharray: 4 4; opacity: 0.7; }
+      .wf-edge-hit {
+        fill: none;
+        stroke: transparent;
+        stroke-width: 16;
+        pointer-events: stroke;
+        cursor: pointer;
+      }
+      .wf-edge-label {
+        font-size: 12px;
+        fill: #667;
+        text-anchor: middle;
+        pointer-events: none;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+      body.dark .wf-edge-label { fill: #99a; }
+      body.dark .wf-edge { stroke: #5a626c; }
+
+      .wf-edge-label-input {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        z-index: 30;
+        padding: 4px 8px;
+        border: 1px solid #007aff;
+        border-radius: 6px;
+        font-size: 0.78rem;
+        background: #fff;
+        color: #333;
+        outline: none;
+        width: 170px;
+      }
+      body.dark .wf-edge-label-input { background: #2a2a2a; color: #ddd; }
+
+      .wf-cell {
+        position: absolute;
+        width: 240px;
+        background: #fff;
+        border: 1.5px solid #d4d8dd;
+        border-radius: 12px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+        padding: 8px 10px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        cursor: default;
+        box-sizing: border-box;
+      }
+      .wf-cell.selected { border-color: #007aff; box-shadow: 0 3px 14px rgba(0,122,255,0.22); }
+      body.dark .wf-cell { background: #242424; border-color: #3c4046; }
+      body.dark .wf-cell.selected { border-color: #4a9bff; }
+
+      .wf-cell-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: move;
+        margin: -8px -10px 0;
+        padding: 8px 10px 2px;
+      }
+      .wf-cell-name {
+        flex: 1;
+        min-width: 0;
+        border: none;
+        background: none;
+        font-weight: 700;
+        font-size: 0.86rem;
+        color: inherit;
+        outline: none;
+        cursor: text;
+      }
+      .wf-cell-delete {
+        border: none;
+        background: none;
+        color: inherit;
+        opacity: 0.4;
+        font-size: 1rem;
+        cursor: pointer;
+        padding: 0 2px;
+      }
+      .wf-cell-delete:hover { opacity: 1; color: #c00; }
+
+      .wf-cell-model {
+        width: 100%;
+        padding: 4px 6px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        font-size: 0.76rem;
+        background: #fff;
+        color: #333;
+        outline: none;
+      }
+      body.dark .wf-cell-model { background: #1d1d1d; border-color: #3a3a3a; color: #ccc; }
+
+      .wf-cell-toolsrow { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+      .wf-cell-tools-btn {
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        background: none;
+        color: inherit;
+        font-size: 0.72rem;
+        padding: 3px 8px;
+        cursor: pointer;
+      }
+      .wf-cell-tools-btn:hover { border-color: #aaa; background: rgba(0,0,0,0.03); }
+      body.dark .wf-cell-tools-btn { border-color: #3a3a3a; }
+
+      .wf-cell-status {
+        font-size: 0.7rem;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(0,0,0,0.06);
+        opacity: 0.75;
+      }
+      body.dark .wf-cell-status { background: rgba(255,255,255,0.08); }
+      .wf-status-running { background: #ff3621 !important; color: #fff; opacity: 1; animation: wfPulse 1.2s ease-in-out infinite; }
+      .wf-status-queued { background: rgba(255,54,33,0.15) !important; color: #ff3621; opacity: 1; }
+      .wf-status-done { background: #1d9b4e !important; color: #fff; opacity: 1; }
+      .wf-status-failed { background: #c00 !important; color: #fff; opacity: 1; }
+      .wf-status-skipped { opacity: 0.4; }
+      @keyframes wfPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+      .wf-cell-prompt {
+        width: 100%;
+        resize: vertical;
+        min-height: 54px;
+        max-height: 220px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        font-size: 0.76rem;
+        font-family: inherit;
+        padding: 6px 8px;
+        background: #fff;
+        color: #333;
+        outline: none;
+        box-sizing: border-box;
+      }
+      .wf-cell-prompt:focus { border-color: #007aff; }
+      body.dark .wf-cell-prompt { background: #1d1d1d; border-color: #3a3a3a; color: #ccc; }
+
+      .wf-port {
+        position: absolute;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #fff;
+        border: 2.5px solid #9aa3ad;
+        z-index: 2;
+      }
+      body.dark .wf-port { background: #242424; }
+      .wf-port-in { left: -8px; top: 50%; transform: translateY(-50%); }
+      .wf-port-out { right: -8px; top: 50%; transform: translateY(-50%); cursor: crosshair; }
+      .wf-port-out:hover { border-color: #007aff; background: #007aff; }
+      .wf-port-feedback {
+        left: 50%; top: -8px; transform: translateX(-50%);
+        border-style: dashed;
+        border-color: #ff3621;
+      }
+
+      .designer-drawer {
+        border-top: 1px solid #e8e8e8;
+        height: 240px;
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+        background: #fff;
+      }
+      body.dark .designer-drawer { border-color: #2a2a2a; background: #1c1c1c; }
+      .designer-drawer.collapsed { height: 38px; }
+      .designer-drawer.collapsed .designer-drawer-body { display: none; }
+      .designer-drawer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 14px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        flex-shrink: 0;
+      }
+      .designer-drawer-header .wf-cell-status { margin-left: 8px; }
+      .designer-drawer-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 4px 16px 14px;
+        font-size: 0.84rem;
+      }
+      .wf-drawer-hint { opacity: 0.5; font-size: 0.8rem; padding: 8px 0; }
+      .wf-tr { margin: 6px 0; }
+      .wf-tr-tool-call, .wf-tr-tool-result, .wf-tr-info {
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 0.74rem;
+        color: #3568a8;
+        background: rgba(0,122,255,0.07);
+        border-radius: 6px;
+        padding: 4px 8px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      body.dark .wf-tr-tool-call, body.dark .wf-tr-tool-result, body.dark .wf-tr-info { color: #7fb0e8; }
+      .wf-tr-error { color: #c00; font-size: 0.78rem; }
+      body.dark .wf-tr-error { color: #ff6a5b; }
+      .wf-tr-verdict {
+        border-left: 3px solid #ff3621;
+        padding: 4px 10px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        background: rgba(255,54,33,0.06);
+        border-radius: 0 6px 6px 0;
+        white-space: pre-wrap;
+      }
+      .wf-tr-output { border-top: 1px dashed #ddd; padding-top: 8px; }
+      body.dark .wf-tr-output { border-color: #3a3a3a; }
+
+      .wf-tools-group {
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        opacity: 0.5;
+        margin: 12px 0 4px;
+      }
+      .wf-tools-row {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 3px 2px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        border-radius: 6px;
+      }
+      .wf-tools-row:hover { background: rgba(0,0,0,0.03); }
+      body.dark .wf-tools-row:hover { background: rgba(255,255,255,0.04); }
+      .wf-tools-name { font-family: ui-monospace, Menlo, monospace; font-size: 0.74rem; }
+      .wf-tools-desc { opacity: 0.45; font-size: 0.72rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

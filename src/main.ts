@@ -23,6 +23,7 @@ try {
 
 const MASON_HOME = path.join(os.homedir(), ".mason");
 const HISTORY_DIR = path.join(MASON_HOME, "chat_history");
+const WORKFLOWS_DIR = path.join(MASON_HOME, "workflows");
 const CONFIG_DIR = path.join(MASON_HOME, "config");
 const BIN_DIR = path.join(MASON_HOME, "bin");
 const WORKSPACES_FILE = path.join(CONFIG_DIR, "workspaces.json");
@@ -243,6 +244,60 @@ ipcMain.handle("history-save", (_event: IpcMainInvokeEvent, { id, title, model, 
 ipcMain.handle("history-delete", (_event: IpcMainInvokeEvent, id: string) => {
   const filePath = path.join(HISTORY_DIR, `${id}.json`);
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+});
+
+// --- Workflow designer persistence (~/.mason/workflows/<id>.json) ---
+
+function ensureWorkflowsDir(): void {
+  if (!fs.existsSync(WORKFLOWS_DIR)) fs.mkdirSync(WORKFLOWS_DIR);
+}
+
+// Workflow ids come from genId() in the renderer, but never trust a
+// renderer-supplied string as a path segment.
+function workflowFilePath(id: string): string | null {
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id)) return null;
+  return path.join(WORKFLOWS_DIR, `${id}.json`);
+}
+
+ipcMain.handle("workflow-list", () => {
+  ensureWorkflowsDir();
+  const files = fs.readdirSync(WORKFLOWS_DIR).filter((f) => f.endsWith(".json"));
+  const out: Array<{ id: string; name: string; updatedAt: number }> = [];
+  for (const f of files) {
+    try {
+      const data = JSON.parse(fs.readFileSync(path.join(WORKFLOWS_DIR, f), "utf-8"));
+      out.push({
+        id: f.replace(/\.json$/, ""),
+        name: data.name || "Untitled workflow",
+        updatedAt: data.updatedAt || 0,
+      });
+    } catch (_) {}
+  }
+  return out.sort((a, b) => b.updatedAt - a.updatedAt);
+});
+
+ipcMain.handle("workflow-load", (_event: IpcMainInvokeEvent, id: string) => {
+  const filePath = workflowFilePath(id);
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+});
+
+ipcMain.handle("workflow-save", (_event: IpcMainInvokeEvent, wf: any) => {
+  ensureWorkflowsDir();
+  const filePath = workflowFilePath(String(wf?.id || ""));
+  if (!filePath) return { ok: false, error: "Invalid workflow id" };
+  // Atomic write: temp file + rename, so a crash mid-write can't corrupt
+  // the saved workflow.
+  const tmp = `${filePath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(wf, null, 2));
+  fs.renameSync(tmp, filePath);
+  return { ok: true };
+});
+
+ipcMain.handle("workflow-delete", (_event: IpcMainInvokeEvent, id: string) => {
+  const filePath = workflowFilePath(id);
+  if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  return { ok: true };
 });
 
 // --- OAuth via Databricks CLI ---
