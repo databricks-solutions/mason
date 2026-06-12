@@ -23,10 +23,21 @@ async function main(): Promise<void> {
     store = pg;
     // Bootstrap in the background so /healthz (and the 503-until-ready
     // behavior on /api) work while Lakebase wakes from scale-to-zero.
-    void pg
-      .bootstrap()
-      .then(() => app.log.info("Store ready"))
-      .catch((e) => app.log.error(`Store bootstrap failed: ${e.message}`));
+    // Retry until it succeeds — first-deploy permission grants (the
+    // deployer's GRANT ... ON SCHEMA) may land after the app starts, and
+    // the store should self-heal without a restart.
+    void (async () => {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await pg.bootstrap();
+          app.log.info("Store ready");
+          return;
+        } catch (e) {
+          app.log.error(`Store bootstrap failed (attempt ${attempt}): ${(e as Error).message}`);
+          await new Promise((r) => setTimeout(r, Math.min(30_000, 5_000 * attempt)));
+        }
+      }
+    })();
   }
 
   app.get("/healthz", async () => ({ ok: true, store: store.ready() }));

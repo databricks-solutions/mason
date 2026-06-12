@@ -11,6 +11,7 @@
 // MASON_SYNC_DEV_USER (default dev@localhost). Never set in production.
 
 import { createHash } from "node:crypto";
+import { workspaceHost } from "./db";
 
 const SCIM_CACHE_TTL_MS = 5 * 60 * 1000;
 const scimCache = new Map<string, { email: string; expiresAt: number }>();
@@ -38,7 +39,7 @@ export async function resolveUser(headers: Record<string, unknown>): Promise<str
     const cached = scimCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.email;
 
-    const host = (process.env.DATABRICKS_HOST || "").replace(/\/+$/, "");
+    const host = workspaceHost();
     if (!host) throw new AuthError(500, "Server missing DATABRICKS_HOST");
     const res = await fetch(`${host}/api/2.0/preview/scim/v2/Me`, {
       headers: { Authorization: `Bearer ${token}` },

@@ -10,6 +10,14 @@
 
 import { Pool } from "pg";
 
+// The Apps runtime injects DATABRICKS_HOST without a scheme
+// ("workspace.cloud.databricks.com"); local dev usually has https://.
+export function workspaceHost(): string {
+  const raw = (process.env.DATABRICKS_HOST || "").replace(/\/+$/, "");
+  if (!raw) return "";
+  return raw.startsWith("http") ? raw : `https://${raw}`;
+}
+
 const TOKEN_LIFETIME_MS = 60 * 60 * 1000;
 const REFRESH_AT_MS = 45 * 60 * 1000;
 const RETRY_BACKOFF_S = [5, 15, 30, 60, 120];
@@ -19,7 +27,7 @@ let lastRefresh = password ? Date.now() : 0;
 const staticPassword = !!process.env.PGPASSWORD;
 
 async function generateToken(): Promise<void> {
-  const host = (process.env.DATABRICKS_HOST || "").replace(/\/+$/, "");
+  const host = workspaceHost();
   const endpoint = process.env.ENDPOINT_NAME || "";
   if (!host || !endpoint) throw new Error("DATABRICKS_HOST / ENDPOINT_NAME not set");
   // App service principal credentials are injected by the Apps runtime; the
