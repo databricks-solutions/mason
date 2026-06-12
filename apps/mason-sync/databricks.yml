@@ -1,17 +1,56 @@
-# DABs bundle for mason-sync: Lakebase project + branch + endpoint + the
-# Databricks App, bound together. One `databricks bundle deploy -t dev`
-# provisions everything. Pattern follows databricks-solutions/lakebase-fastapi-app.
+# DABs bundle for mason-sync — manages the Databricks App only.
+#
+# The Lakebase infrastructure (project/branch/endpoint/database) is
+# provisioned once, out-of-band, and referenced here by resource path. The
+# Beta postgres terraform resources are not idempotent enough yet to manage
+# the full stack in one bundle (endpoint/database creation races); revisit
+# when they stabilize. One-time provisioning:
+#
+#   databricks postgres create-project --json '{
+#     "project": {"project_id": "mason-sync", "pg_version": 17,
+#       "display_name": "Mason session sync",
+#       "default_endpoint_settings": {"autoscaling_limit_min_cu": 0.5,
+#         "autoscaling_limit_max_cu": 2, "suspend_timeout_duration": "300s"}}}'
+#
+# A new project auto-creates the default branch ("production"), a read-write
+# endpoint ("primary"), and the "databricks_postgres" database.
 
 bundle:
   name: mason-sync
 
 variables:
-  project_name:
-    description: Lakebase project id (single source of truth)
-    default: mason-sync
+  lakebase_branch:
+    description: Lakebase branch resource path
+    default: projects/mason-sync/branches/production
+  lakebase_endpoint:
+    description: Lakebase endpoint resource path (ENDPOINT_NAME for the app)
+    default: projects/mason-sync/branches/production/endpoints/primary
   pg_database:
-    description: Postgres database name
-    default: databricks_postgres
+    description: >
+      Control-plane database id for the app binding. Note: the id uses a
+      hyphen (databricks-postgres) while the actual Postgres database name
+      uses an underscore (databricks_postgres) — the binding injects the
+      correct PGDATABASE at runtime.
+    default: databricks-postgres
+
+# build/ and public/viewer.js are gitignored (compiled output) but the app
+# runtime needs them — include explicitly. node_modules stays excluded; the
+# Apps runtime installs from package.json.
+sync:
+  include:
+    - build/**
+    - public/viewer.js
+  exclude:
+    # The bundle root has no .gitignore of its own (the repo-root one doesn't
+    # apply to bundle sync), so exclude explicitly — a macOS-built
+    # node_modules breaks the Linux app's package install.
+    - node_modules/**
+    # Lockfiles generated on dev laptops pin tarball URLs from the corporate
+    # npm proxy, which 404 inside the Apps build environment. Without a
+    # lockfile the app build resolves fresh against its own registry.
+    # TODO(prod hardening): generate a lockfile inside the Apps environment
+    # (or CI) and ship that instead.
+    - package-lock.json
 
 targets:
   dev:
@@ -19,29 +58,6 @@ targets:
     default: true
 
 resources:
-  postgres_projects:
-    mason_sync_db:
-      project_id: ${var.project_name}
-      pg_version: 17
-      autoscaling:
-        min_cu: 0.5
-        max_cu: 2
-        suspend_timeout: 300s
-
-  postgres_branches:
-    production:
-      parent: ${resources.postgres_projects.mason_sync_db.id}
-      branch_id: production
-      replace_existing: true
-
-  postgres_endpoints:
-    primary:
-      parent: ${resources.postgres_branches.production.id}
-      endpoint_type: ENDPOINT_TYPE_READ_WRITE
-      autoscaling:
-        min_cu: 0.5
-        max_cu: 2
-
   apps:
     mason_sync:
       name: mason-sync
@@ -50,10 +66,10 @@ resources:
       resources:
         - name: mason-sync-db
           postgres:
-            branch: ${resources.postgres_branches.production.id}
-            database: ${resources.postgres_branches.production.id}/databases/${var.pg_database}
+            branch: ${var.lakebase_branch}
+            database: ${var.lakebase_branch}/databases/${var.pg_database}
             permission: CAN_CONNECT_AND_CREATE
       config:
         env:
           - name: ENDPOINT_NAME
-            value: ${resources.postgres_endpoints.primary.id}
+            value: ${var.lakebase_endpoint}
