@@ -52,6 +52,8 @@ async function loadChat(id: string): Promise<void> {
   }
   renderMessages();
   refreshHistory();
+  // Tail web-originated turns for this chat (and catch up any we missed).
+  syncLiveAttach(id);
 }
 
 function isModelAvailable(modelValue: string | null | undefined): boolean {

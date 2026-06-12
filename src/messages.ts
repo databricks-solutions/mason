@@ -262,9 +262,12 @@ function renderQuestionCard(
   });
 }
 
+declare function syncLiveDetach(): void;
+
 function newChat(): void {
   mason.history = [];
   mason.currentChatId = null;
+  syncLiveDetach();
   if (mason.currentView !== "chat" && typeof switchToChatsTab === "function") {
     switchToChatsTab();
   }

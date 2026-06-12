@@ -27,6 +27,17 @@
     Watching live &middot; send from Mason desktop
   </footer>
 
+  <footer id="composer" class="composer" style="display:none;">
+    <div id="composerStatus" class="composer-status" style="display:none;"></div>
+    <div class="composer-row">
+      <textarea id="composerInput" rows="1" placeholder="Message Mason…" aria-label="Message"></textarea>
+      <button id="composerSend" class="composer-send" aria-label="Send">&#10148;</button>
+    </div>
+    <div class="composer-row composer-meta">
+      <select id="composerModel" aria-label="Model"></select>
+    </div>
+  </footer>
+
   <script src="viewer.js"></script>
 </body>
 </html>

@@ -12,6 +12,9 @@
 
 declare function getAuthToken(): Promise<string>;
 declare function getSelectedProfile(): { name: string; host?: string } | undefined;
+declare function addMessageEl(role: string, text: string): void;
+declare function renderMarkdown(text: string): string;
+declare function saveCurrentChat(): Promise<void>;
 
 interface SyncQueueOp {
   path: string; // relative API path
@@ -245,6 +248,189 @@ function syncDelta(chatId: string, turnId: string, seq: number, fullText: string
       /* best-effort by design */
     }
   })();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: turn-lock pre-flight + live merge of web-originated turns
+// ---------------------------------------------------------------------------
+
+// Per-session merge cursor (highest server item position this desktop has
+// accounted for). Persisted so offline web turns are caught up on next open.
+function syncCursorGet(chatId: string): number {
+  return Number(localStorage.getItem(`mason-sync-cursor-${chatId}`) ?? -1);
+}
+function syncCursorSet(chatId: string, pos: number): void {
+  if (pos > syncCursorGet(chatId)) {
+    localStorage.setItem(`mason-sync-cursor-${chatId}`, String(pos));
+  }
+}
+
+// Acquire the server-side turn lock before a desktop turn. Returns:
+//  - a turn id (release with syncTurnEnd)
+//  - "conflict" when web/another surface holds the lock (caller should stop)
+//  - null when sync is disabled or the server is unreachable (proceed — if
+//    the server is down, no other surface can be writing either)
+async function syncTurnAcquire(chatId: string, title: string): Promise<string | "conflict" | null> {
+  if (!syncEnabled() || !chatId) return null;
+  try {
+    const token = await getAuthToken();
+    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    // New chats need the session row before the lock can attach to it.
+    await fetch(`${syncBaseUrl()}/api/v1/sessions/${chatId}`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ title }),
+    });
+    const res = await fetch(`${syncBaseUrl()}/api/v1/sessions/${chatId}/turns`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+    if (res.status === 409) return "conflict";
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.turn_id || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function syncTurnEnd(turnId: string | null): void {
+  if (!turnId || !syncEnabled()) return;
+  void (async () => {
+    try {
+      const token = await getAuthToken();
+      await fetch(`${syncBaseUrl()}/api/v1/turns/${turnId}/end`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "done" }),
+      });
+    } catch (_) {}
+  })();
+}
+
+// --- live merge ---
+
+const syncLive = {
+  chatId: null as string | null,
+  abort: null as AbortController | null,
+  bubble: null as HTMLElement | null,
+  bubbleTurn: null as string | null,
+};
+
+function syncMergeItem(chatId: string, item: any): void {
+  if (item.origin !== "web") {
+    // Desktop's own mirror echo — just advance the cursor.
+    syncCursorSet(chatId, item.position);
+    return;
+  }
+  syncCursorSet(chatId, item.position);
+  if (mason.currentChatId !== chatId) return;
+  const d = item.data || {};
+  if (item.type !== "message") return; // phase 2 web turns are chat-only
+
+  // Append to local history WITHOUT re-publishing (advance syncedIndex past
+  // the merged entry so syncCatchUp never re-posts it under a new id).
+  (mason.history as any[]).push({ role: d.role, content: d.content });
+  syncState.syncedIndex.set(chatId, (mason.history as any[]).length);
+
+  if (d.role === "assistant" && syncLive.bubble && item.id === `${syncLive.bubbleTurn}.a`) {
+    syncLive.bubble.innerHTML = renderMarkdown(d.content || "");
+    syncLive.bubble = null;
+    syncLive.bubbleTurn = null;
+  } else {
+    addMessageEl(d.role === "user" ? "user" : "assistant", d.content || "");
+  }
+  void saveCurrentChat();
+}
+
+function syncMergeDelta(chatId: string, turnId: string, text: string): void {
+  if (mason.currentChatId !== chatId) return;
+  const messagesEl = mason.el.messages as HTMLElement | null;
+  if (!messagesEl) return;
+  if (!syncLive.bubble) {
+    syncLive.bubble = document.createElement("div");
+    syncLive.bubble.className = "msg assistant";
+    messagesEl.appendChild(syncLive.bubble);
+  }
+  syncLive.bubbleTurn = turnId;
+  syncLive.bubble.innerHTML = renderMarkdown(text);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// Attach the live stream for a chat: catch up missed items by cursor, then
+// tail the SSE stream (fetch-based — EventSource can't carry a Bearer).
+// Reconnects with backoff while the same chat stays open.
+function syncLiveAttach(chatId: string): void {
+  syncLiveDetach();
+  if (!syncEnabled() || !chatId) return;
+  syncLive.chatId = chatId;
+  const abort = new AbortController();
+  syncLive.abort = abort;
+
+  void (async () => {
+    let backoff = 1000;
+    while (!abort.signal.aborted && syncLive.chatId === chatId && syncEnabled()) {
+      try {
+        const token = await getAuthToken();
+        const headers = { Authorization: `Bearer ${token}` };
+        // Cursor catch-up (covers web turns that ran while we were closed).
+        const cu = await fetch(
+          `${syncBaseUrl()}/api/v1/sessions/${chatId}/items?after=${syncCursorGet(chatId)}`,
+          { headers, signal: abort.signal }
+        );
+        if (cu.ok) {
+          const { items } = await cu.json();
+          for (const item of items || []) syncMergeItem(chatId, item);
+        } else if (cu.status === 404) {
+          return; // session not on the server (yet) — nothing to tail
+        }
+
+        const res = await fetch(`${syncBaseUrl()}/api/v1/sessions/${chatId}/stream`, {
+          headers,
+          signal: abort.signal,
+        });
+        if (!res.ok || !res.body) throw new Error(`stream HTTP ${res.status}`);
+        backoff = 1000;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        let event = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let nl: number;
+          while ((nl = buf.indexOf("\n")) !== -1) {
+            const line = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+            if (line.startsWith("event: ")) event = line.slice(7);
+            else if (line.startsWith("data: ")) {
+              try {
+                const payload = JSON.parse(line.slice(6));
+                if (event === "item") syncMergeItem(chatId, payload.item);
+                else if (event === "delta")
+                  syncMergeDelta(chatId, payload.turn_id, payload.text);
+              } catch (_) {}
+            }
+          }
+        }
+      } catch (_) {
+        /* fall through to backoff + reconnect */
+      }
+      if (abort.signal.aborted) return;
+      await new Promise((r) => setTimeout(r, backoff));
+      backoff = Math.min(backoff * 2, 30_000);
+    }
+  })();
+}
+
+function syncLiveDetach(): void {
+  syncLive.abort?.abort();
+  syncLive.abort = null;
+  syncLive.chatId = null;
+  syncLive.bubble = null;
+  syncLive.bubbleTurn = null;
 }
 
 // Push one whole local chat to the server, replacing whatever it has —

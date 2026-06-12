@@ -70,6 +70,32 @@ export interface SnapshotResponse {
   session: SessionRow;
   items: StoredItem[];
   live: boolean;
+  active_turn: TurnRow | null;
+}
+
+// --- Turns (Phase 2: server-side execution + multi-writer lock) ---
+
+export type TurnOrigin = "desktop" | "web";
+export type TurnStatus = "running" | "done" | "failed" | "cancelled";
+
+export interface TurnRow {
+  id: string;
+  session_id: string;
+  origin: TurnOrigin;
+  status: TurnStatus;
+  error?: string | null;
+  started_at: string;
+  ended_at?: string | null;
+}
+
+export interface MessagePostBody {
+  text: string;
+  model: string; // gateway model id, e.g. databricks-claude-haiku-4-5
+}
+
+export interface ModelInfo {
+  value: string;
+  label: string;
 }
 
 // --- SSE frames ---
@@ -101,10 +127,22 @@ export interface HeartbeatFrame {
   kind: "heartbeat";
 }
 
-export type SessionStreamFrame = ItemFrame | DeltaFrame | SessionFrame | HeartbeatFrame;
+export interface TurnFrame {
+  kind: "turn";
+  turn: TurnRow;
+}
+
+export type SessionStreamFrame =
+  | ItemFrame
+  | DeltaFrame
+  | SessionFrame
+  | HeartbeatFrame
+  | TurnFrame;
 export type ListStreamFrame = SessionFrame | RemovedFrame | HeartbeatFrame;
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const TOOL_RESULT_PREVIEW_CHARS = 500;
 export const SNAPSHOT_ITEM_LIMIT = 200;
 export const HEARTBEAT_INTERVAL_MS = 25_000;
+export const TURN_DEADLINE_MS = 10 * 60 * 1000; // hard wall-clock per server turn
+export const TURN_STALE_SWEEP_MS = TURN_DEADLINE_MS + 60_000;

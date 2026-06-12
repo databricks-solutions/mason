@@ -59,3 +59,18 @@ export async function resolveUser(headers: Record<string, unknown>): Promise<str
 
   throw new AuthError(401, "Unauthenticated");
 }
+
+// Raw user OAuth token for on-behalf-of calls (gateway, serving-endpoints).
+// Browser path: X-Forwarded-Access-Token (injected when the app declares
+// user_api_scopes). Programmatic path: the Bearer itself. Dev fallback:
+// MASON_SYNC_DEV_TOKEN (local browser testing has no ingress headers).
+export function extractUserToken(headers: Record<string, unknown>): string | null {
+  const fwd = headers["x-forwarded-access-token"];
+  if (typeof fwd === "string" && fwd.length > 0) return fwd;
+  const authz = headers["authorization"];
+  if (typeof authz === "string" && authz.startsWith("Bearer ")) return authz.slice(7);
+  if (process.env.MASON_SYNC_INSECURE_DEV === "1" && process.env.MASON_SYNC_DEV_TOKEN) {
+    return process.env.MASON_SYNC_DEV_TOKEN;
+  }
+  return null;
+}

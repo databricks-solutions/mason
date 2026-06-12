@@ -4,7 +4,16 @@
 // dev (desktop e2e without Postgres). The Postgres store is the production
 // path on Lakebase.
 
-import type { SessionRow, StoredItem, SyncItem, SessionUpsertBody } from "../shared/protocol";
+import type {
+  SessionRow,
+  StoredItem,
+  SyncItem,
+  SessionUpsertBody,
+  TurnRow,
+  TurnOrigin,
+  TurnStatus,
+} from "../shared/protocol";
+import { TURN_STALE_SWEEP_MS } from "../shared/protocol";
 
 export interface Store {
   ready(): boolean;
@@ -14,8 +23,25 @@ export interface Store {
   getSession(user: string, id: string): Promise<SessionRow | null>;
   // Returns only the items that were newly inserted (duplicates by id are
   // acked but not re-inserted, and not returned — fanout must not re-emit).
-  appendItems(user: string, sessionId: string, items: SyncItem[], replace: boolean): Promise<StoredItem[]>;
+  appendItems(
+    user: string,
+    sessionId: string,
+    items: SyncItem[],
+    replace: boolean,
+    origin?: string
+  ): Promise<StoredItem[]>;
   listItems(user: string, sessionId: string, afterPosition: number, limit: number): Promise<StoredItem[]>;
+
+  // Turn lock (Phase 2): at most one running turn per session, enforced
+  // atomically. acquireTurn returns null on conflict (caller 409s).
+  acquireTurn(user: string, sessionId: string, turnId: string, origin: TurnOrigin): Promise<TurnRow | null>;
+  endTurn(turnId: string, status: TurnStatus, error?: string): Promise<TurnRow | null>;
+  getRunningTurn(user: string, sessionId: string): Promise<TurnRow | null>;
+  getTurn(turnId: string): Promise<TurnRow | null>;
+  // Sweep turns running past the deadline (server crash mid-turn would
+  // otherwise wedge the session). Returns the swept turns.
+  sweepStaleTurns(): Promise<TurnRow[]>;
+
   close(): Promise<void>;
 }
 
@@ -35,6 +61,7 @@ interface MemSession {
 
 export class MemStore implements Store {
   private sessions = new Map<string, MemSession>();
+  private turns = new Map<string, TurnRow & { user: string }>();
 
   ready(): boolean {
     return true;
@@ -101,7 +128,8 @@ export class MemStore implements Store {
     user: string,
     sessionId: string,
     items: SyncItem[],
-    replace: boolean
+    replace: boolean,
+    origin: string = "desktop"
   ): Promise<StoredItem[]> {
     const s = this.owned(user, sessionId);
     if (!s) throw new NotFoundError();
@@ -117,7 +145,7 @@ export class MemStore implements Store {
         ...item,
         session_id: sessionId,
         position: nextPos++,
-        origin: "desktop",
+        origin,
         created_at: new Date().toISOString(),
       };
       s.items.push(stored);
@@ -126,6 +154,76 @@ export class MemStore implements Store {
     }
     if (inserted.length > 0) s.row.updated_at = new Date().toISOString();
     return inserted;
+  }
+
+  async acquireTurn(
+    user: string,
+    sessionId: string,
+    turnId: string,
+    origin: TurnOrigin
+  ): Promise<TurnRow | null> {
+    const s = this.owned(user, sessionId);
+    if (!s) throw new NotFoundError();
+    for (const t of this.turns.values()) {
+      if (t.session_id === sessionId && t.status === "running") return null;
+    }
+    const turn: TurnRow & { user: string } = {
+      id: turnId,
+      session_id: sessionId,
+      origin,
+      status: "running",
+      error: null,
+      started_at: new Date().toISOString(),
+      ended_at: null,
+      user,
+    };
+    this.turns.set(turnId, turn);
+    const { user: _u, ...row } = turn;
+    return row;
+  }
+
+  async endTurn(turnId: string, status: TurnStatus, error?: string): Promise<TurnRow | null> {
+    const t = this.turns.get(turnId);
+    if (!t || t.status !== "running") return null;
+    t.status = status;
+    t.error = error || null;
+    t.ended_at = new Date().toISOString();
+    const { user: _u, ...row } = t;
+    return row;
+  }
+
+  async getRunningTurn(user: string, sessionId: string): Promise<TurnRow | null> {
+    const s = this.owned(user, sessionId);
+    if (!s) return null;
+    for (const t of this.turns.values()) {
+      if (t.session_id === sessionId && t.status === "running") {
+        const { user: _u, ...row } = t;
+        return row;
+      }
+    }
+    return null;
+  }
+
+  async getTurn(turnId: string): Promise<TurnRow | null> {
+    const t = this.turns.get(turnId);
+    if (!t) return null;
+    const { user: _u, ...row } = t;
+    return row;
+  }
+
+  async sweepStaleTurns(): Promise<TurnRow[]> {
+    const swept: TurnRow[] = [];
+    const cutoff = Date.now() - TURN_STALE_SWEEP_MS;
+    for (const t of this.turns.values()) {
+      if (t.status === "running" && new Date(t.started_at).getTime() < cutoff) {
+        t.status = "failed";
+        t.error = "Turn exceeded its deadline (stale-lock sweep).";
+        t.ended_at = new Date().toISOString();
+        const { user: _u, ...row } = t;
+        swept.push(row);
+      }
+    }
+    return swept;
   }
 
   async listItems(
@@ -172,6 +270,21 @@ CREATE TABLE IF NOT EXISTS session_items (
   PRIMARY KEY (session_id, id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS session_items_pos ON session_items (session_id, position);
+
+CREATE TABLE IF NOT EXISTS turns (
+  id          TEXT PRIMARY KEY,
+  session_id  TEXT NOT NULL REFERENCES sessions(id),
+  user_email  TEXT NOT NULL,
+  origin      TEXT NOT NULL,
+  status      TEXT NOT NULL,
+  error       TEXT,
+  started_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ended_at    TIMESTAMPTZ
+);
+-- The entire multi-writer concurrency story: at most one running turn per
+-- session, enforced atomically by the index.
+CREATE UNIQUE INDEX IF NOT EXISTS one_running_turn
+  ON turns (session_id) WHERE status = 'running';
 `;
 
 function rowToSession(r: any): SessionRow {
@@ -182,6 +295,18 @@ function rowToSession(r: any): SessionRow {
     workspace_host: r.workspace_host,
     created_at: r.created_at.toISOString(),
     updated_at: r.updated_at.toISOString(),
+  };
+}
+
+function rowToTurn(r: any): TurnRow {
+  return {
+    id: r.id,
+    session_id: r.session_id,
+    origin: r.origin,
+    status: r.status,
+    error: r.error,
+    started_at: r.started_at.toISOString(),
+    ended_at: r.ended_at ? r.ended_at.toISOString() : null,
   };
 }
 
@@ -260,7 +385,8 @@ export class PgStore implements Store {
     user: string,
     sessionId: string,
     items: SyncItem[],
-    replace: boolean
+    replace: boolean,
+    origin: string = "desktop"
   ): Promise<StoredItem[]> {
     const client = await this.pool.connect();
     try {
@@ -282,10 +408,10 @@ export class PgStore implements Store {
       for (const item of items) {
         const res = await client.query(
           `INSERT INTO session_items (id, session_id, position, type, origin, data)
-           VALUES ($1, $2, $3, $4, 'desktop', $5)
+           VALUES ($1, $2, $3, $4, $6, $5)
            ON CONFLICT (session_id, id) DO NOTHING
            RETURNING *`,
-          [item.id, sessionId, nextPos, item.type, JSON.stringify(item.data)]
+          [item.id, sessionId, nextPos, item.type, JSON.stringify(item.data), origin]
         );
         if (res.rowCount === 1) {
           nextPos += 1;
@@ -322,6 +448,64 @@ export class PgStore implements Store {
       [sessionId, afterPosition, limit]
     );
     return res.rows.map(rowToItem);
+  }
+
+  async acquireTurn(
+    user: string,
+    sessionId: string,
+    turnId: string,
+    origin: TurnOrigin
+  ): Promise<TurnRow | null> {
+    const own = await this.pool.query(
+      `SELECT 1 FROM sessions WHERE id = $1 AND user_email = $2 AND deleted_at IS NULL`,
+      [sessionId, user]
+    );
+    if (own.rowCount === 0) throw new NotFoundError();
+    try {
+      const res = await this.pool.query(
+        `INSERT INTO turns (id, session_id, user_email, origin, status)
+         VALUES ($1, $2, $3, $4, 'running') RETURNING *`,
+        [turnId, sessionId, user, origin]
+      );
+      return rowToTurn(res.rows[0]);
+    } catch (e: any) {
+      if (e.code === "23505") return null; // one_running_turn conflict
+      throw e;
+    }
+  }
+
+  async endTurn(turnId: string, status: TurnStatus, error?: string): Promise<TurnRow | null> {
+    const res = await this.pool.query(
+      `UPDATE turns SET status = $2, error = $3, ended_at = now()
+       WHERE id = $1 AND status = 'running' RETURNING *`,
+      [turnId, status, error || null]
+    );
+    return res.rows[0] ? rowToTurn(res.rows[0]) : null;
+  }
+
+  async getRunningTurn(user: string, sessionId: string): Promise<TurnRow | null> {
+    const res = await this.pool.query(
+      `SELECT t.* FROM turns t JOIN sessions s ON s.id = t.session_id
+       WHERE t.session_id = $1 AND s.user_email = $2 AND t.status = 'running'`,
+      [sessionId, user]
+    );
+    return res.rows[0] ? rowToTurn(res.rows[0]) : null;
+  }
+
+  async getTurn(turnId: string): Promise<TurnRow | null> {
+    const res = await this.pool.query(`SELECT * FROM turns WHERE id = $1`, [turnId]);
+    return res.rows[0] ? rowToTurn(res.rows[0]) : null;
+  }
+
+  async sweepStaleTurns(): Promise<TurnRow[]> {
+    const res = await this.pool.query(
+      `UPDATE turns SET status = 'failed', ended_at = now(),
+        error = 'Turn exceeded its deadline (stale-lock sweep).'
+       WHERE status = 'running' AND started_at < now() - ($1 || ' milliseconds')::interval
+       RETURNING *`,
+      [String(TURN_STALE_SWEEP_MS)]
+    );
+    return res.rows.map(rowToTurn);
   }
 
   async close(): Promise<void> {

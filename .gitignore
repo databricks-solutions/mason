@@ -123,3 +123,4 @@ Makefile
 # mason-sync app build output (compiled by apps/mason-sync `npm run build`)
 apps/mason-sync/build/
 apps/mason-sync/public/viewer.js
+apps/mason-sync/shared/chat-shared.ts

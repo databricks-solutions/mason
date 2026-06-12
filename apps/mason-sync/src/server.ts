@@ -44,6 +44,19 @@ async function main(): Promise<void> {
 
   registerRoutes(app, store, fanout);
 
+  // Stale-turn sweep: a crash mid-turn would otherwise wedge the session's
+  // lock forever. Runs once a minute once the store is up.
+  const sweep = setInterval(async () => {
+    if (!store.ready()) return;
+    try {
+      const swept = await store.sweepStaleTurns();
+      for (const t of swept) app.log.warn(`Swept stale turn ${t.id} (session ${t.session_id})`);
+    } catch (e) {
+      app.log.error(`Stale-turn sweep failed: ${(e as Error).message}`);
+    }
+  }, 60_000);
+  sweep.unref?.();
+
   // Mobile web viewer (static, read-only). Compiled output runs from
   // build/src/, so the app root is two levels up.
   app.register(fastifyStatic, {

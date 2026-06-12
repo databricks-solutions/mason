@@ -242,6 +242,19 @@ async function send(): Promise<void> {
   // the sync publisher can attribute stream deltas of a brand-new chat.
   if (!mason.currentChatId) mason.currentChatId = genId();
 
+  // Multi-writer safety (sync enabled): hold the server-side turn lock so a
+  // send from the web viewer can't interleave with this one. "conflict"
+  // means another surface is mid-turn; unreachable server means nothing
+  // else can be writing, so we proceed.
+  const syncTurnId = await syncTurnAcquire(mason.currentChatId, text.slice(0, 60) || "Chat");
+  if (syncTurnId === "conflict") {
+    addMessageEl(
+      "error",
+      "Another device is responding in this chat right now — wait for it to finish, then try again."
+    );
+    return;
+  }
+
   mason.chatAborted = false;
   setGenerating(true);
   showThinking();
@@ -251,6 +264,8 @@ async function send(): Promise<void> {
   } catch (e) {
     if (!mason.chatAborted) addMessageEl("error", (e as Error).message);
   } finally {
+    syncTurnEnd(syncTurnId);
+    syncLiveAttach(mason.currentChatId);
     removeThinking();
     setGenerating(false);
     inputEl?.focus();

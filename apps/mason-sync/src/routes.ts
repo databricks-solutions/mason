@@ -9,14 +9,19 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Store } from "./store";
 import { NotFoundError } from "./store";
 import { Fanout, SseSink } from "./fanout";
-import { resolveUser, AuthError } from "./auth";
+import { resolveUser, extractUserToken, AuthError } from "./auth";
+import { runTurn, cancelTurn } from "./turn-engine";
+import { discoverModels } from "./models";
 import type {
   DeltaPostBody,
   ItemsPostBody,
+  MessagePostBody,
   SessionUpsertBody,
   SnapshotResponse,
+  TurnOrigin,
 } from "../shared/protocol";
 import { SNAPSHOT_ITEM_LIMIT } from "../shared/protocol";
+import { randomUUID } from "node:crypto";
 
 const MAX_ITEMS_PER_POST = 200;
 const MAX_ITEM_BYTES = 64 * 1024;
@@ -93,9 +98,20 @@ export function registerRoutes(app: FastifyInstance, store: Store, fanout: Fanou
     const all = await store.listItems(user(req), req.params.id, -1, Number.MAX_SAFE_INTEGER);
     const items = all.slice(-SNAPSHOT_ITEM_LIMIT);
     const live = Date.now() - (lastDelta.get(req.params.id) || 0) < LIVE_WINDOW_MS;
-    const body: SnapshotResponse = { session, items, live };
+    const active_turn = await store.getRunningTurn(user(req), req.params.id);
+    const body: SnapshotResponse = { session, items, live, active_turn };
     return body;
   });
+
+  // Cursor catch-up for the desktop merge (items strictly after a position).
+  app.get<{ Params: { id: string }; Querystring: { after?: string } }>(
+    "/api/v1/sessions/:id/items",
+    async (req) => {
+      const after = Number(req.query.after ?? -1);
+      const items = await store.listItems(user(req), req.params.id, after, 1000);
+      return { items };
+    }
+  );
 
   app.post<{ Params: { id: string }; Body: ItemsPostBody; Querystring: { replace?: string } }>(
     "/api/v1/sessions/:id/items",
@@ -148,6 +164,116 @@ export function registerRoutes(app: FastifyInstance, store: Store, fanout: Fanou
       return { ok: true };
     }
   );
+
+  // --- Phase 2: server-side turns ---
+
+  // Send a message from the web. Acquires the turn lock, persists the user
+  // message, then runs the turn detached (the response is a 202; output
+  // arrives on the session's SSE stream).
+  app.post<{ Params: { id: string }; Body: MessagePostBody }>(
+    "/api/v1/sessions/:id/messages",
+    async (req, reply) => {
+      const text = (req.body?.text || "").trim();
+      const model = (req.body?.model || "").trim();
+      if (!text) return reply.code(400).send({ error: "text required" });
+      if (!model) return reply.code(400).send({ error: "model required" });
+      const token = extractUserToken(req.headers as Record<string, unknown>);
+      if (!token)
+        return reply.code(401).send({
+          error:
+            "No user token on this request — the app needs user authorization (user_api_scopes) to run turns on your behalf.",
+        });
+
+      const turnId = randomUUID().replace(/-/g, "").slice(0, 16);
+      const turn = await store.acquireTurn(user(req), req.params.id, turnId, "web");
+      if (!turn) {
+        const active = await store.getRunningTurn(user(req), req.params.id);
+        return reply.code(409).send({ error: "A turn is already running", active_turn: active });
+      }
+      fanout.emitSession(user(req), req.params.id, { kind: "turn", turn });
+
+      // Persist the user message before anything executes.
+      const [item] = await store.appendItems(
+        user(req),
+        req.params.id,
+        [{ id: `${turnId}.u`, type: "message", data: { role: "user", content: text } }],
+        false,
+        "web"
+      );
+      if (item) fanout.emitSession(user(req), req.params.id, { kind: "item", item });
+      const session = await store.getSession(user(req), req.params.id);
+      if (session) {
+        session.model_label = session.model_label || model;
+        fanout.emitList(user(req), { kind: "session", session });
+      }
+
+      void runTurn({
+        store,
+        fanout,
+        user: user(req),
+        token,
+        sessionId: req.params.id,
+        turn,
+        model,
+        log: (m) => app.log.info(m),
+      });
+
+      reply.code(202);
+      return { ok: true, turn_id: turnId };
+    }
+  );
+
+  app.post<{ Params: { id: string } }>("/api/v1/turns/:id/cancel", async (req, reply) => {
+    const turn = await store.getTurn(req.params.id);
+    if (!turn) return reply.code(404).send({ error: "Turn not found" });
+    // Authorize via session ownership.
+    const session = await store.getSession(user(req), turn.session_id);
+    if (!session) return reply.code(404).send({ error: "Turn not found" });
+    const cancelled = cancelTurn(req.params.id);
+    if (!cancelled && turn.status === "running") {
+      // Lock exists but no in-process engine (desktop-held lock, or another
+      // process). Mark it ended so the session unwedges.
+      const ended = await store.endTurn(req.params.id, "cancelled");
+      if (ended) fanout.emitSession(user(req), turn.session_id, { kind: "turn", turn: ended });
+    }
+    return { ok: true };
+  });
+
+  // Desktop pre-flight lock: acquire before a desktop-originated turn,
+  // release when it completes. The desktop's chat loop runs locally — the
+  // server only tracks the lock so web sends get a clean 409.
+  app.post<{ Params: { id: string }; Body: { origin?: TurnOrigin } }>(
+    "/api/v1/sessions/:id/turns",
+    async (req, reply) => {
+      const turnId = randomUUID().replace(/-/g, "").slice(0, 16);
+      const turn = await store.acquireTurn(user(req), req.params.id, turnId, "desktop");
+      if (!turn) {
+        const active = await store.getRunningTurn(user(req), req.params.id);
+        return reply.code(409).send({ error: "A turn is already running", active_turn: active });
+      }
+      fanout.emitSession(user(req), req.params.id, { kind: "turn", turn });
+      return { ok: true, turn_id: turnId };
+    }
+  );
+
+  app.post<{ Params: { id: string }; Body: { status?: "done" | "failed" } }>(
+    "/api/v1/turns/:id/end",
+    async (req, reply) => {
+      const turn = await store.getTurn(req.params.id);
+      if (!turn) return reply.code(404).send({ error: "Turn not found" });
+      const session = await store.getSession(user(req), turn.session_id);
+      if (!session) return reply.code(404).send({ error: "Turn not found" });
+      const ended = await store.endTurn(req.params.id, req.body?.status || "done");
+      if (ended) fanout.emitSession(user(req), turn.session_id, { kind: "turn", turn: ended });
+      return { ok: true };
+    }
+  );
+
+  app.get("/api/v1/models", async (req, reply) => {
+    const token = extractUserToken(req.headers as Record<string, unknown>);
+    if (!token) return reply.code(401).send({ error: "No user token on this request" });
+    return { models: await discoverModels(user(req), token) };
+  });
 
   app.get<{ Params: { id: string } }>("/api/v1/sessions/:id/stream", async (req, reply) => {
     const session = await store.getSession(user(req), req.params.id);

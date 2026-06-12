@@ -35,6 +35,11 @@ const $title = document.getElementById("topTitle") as HTMLElement;
 const $back = document.getElementById("backBtn") as HTMLButtonElement;
 const $dot = document.getElementById("liveDot") as HTMLElement;
 const $footer = document.getElementById("watchFooter") as HTMLElement;
+const $composer = document.getElementById("composer") as HTMLElement;
+const $composerInput = document.getElementById("composerInput") as HTMLTextAreaElement;
+const $composerSend = document.getElementById("composerSend") as HTMLButtonElement;
+const $composerModel = document.getElementById("composerModel") as HTMLSelectElement;
+const $composerStatus = document.getElementById("composerStatus") as HTMLElement;
 
 // --- state ---
 let sessions: VSession[] = [];
@@ -45,6 +50,9 @@ let liveTurnId: string | null = null;
 let liveSeq = -1;
 let es: EventSource | null = null;
 let listEs: EventSource | null = null;
+let activeTurn: { id: string; origin: string } | null = null;
+let canSend = false; // models endpoint reachable => composer enabled
+let lastModel = localStorage.getItem("mason-viewer-model") || "";
 
 function md(text: string): string {
   return DOMPurify.sanitize(marked.parse(text || ""));
@@ -183,10 +191,17 @@ async function openSession(s: VSession): Promise<void> {
   liveBubble = null;
   liveTurnId = null;
   liveSeq = -1;
+  activeTurn = null;
   $list.style.display = "none";
   $transcript.style.display = "";
   $transcript.innerHTML = "";
-  $footer.style.display = "";
+  if (canSend) {
+    $composer.style.display = "";
+    $footer.style.display = "none";
+  } else {
+    $footer.style.display = "";
+    $composer.style.display = "none";
+  }
   $back.style.display = "";
   $title.textContent = s.title;
 
@@ -210,9 +225,11 @@ async function openSession(s: VSession): Promise<void> {
       renderDelta(payload.turn_id, payload.seq, payload.text);
     } else if (kind === "session") {
       $title.textContent = payload.session.title;
+    } else if (kind === "turn") {
+      onTurnFrame(payload.turn);
     }
   };
-  for (const kind of ["item", "delta", "session"]) {
+  for (const kind of ["item", "delta", "session", "turn"]) {
     es.addEventListener(kind, (ev) => handle(kind, JSON.parse((ev as MessageEvent).data)));
   }
 
@@ -226,17 +243,147 @@ async function openSession(s: VSession): Promise<void> {
 
   // 3. render snapshot, then drain the buffer (renderItem dedupes by id)
   for (const item of snap.items as VItem[]) renderItem(item);
+  if (snap.active_turn && snap.active_turn.status === "running") onTurnFrame(snap.active_turn);
   snapshotDone = true;
   for (const b of buffered) handle(b.kind, b.payload);
   scrollToEnd();
 }
 
+// --- composer (Phase 2) ---
+
+function onTurnFrame(turn: { id: string; origin: string; status: string }): void {
+  if (turn.status === "running") {
+    activeTurn = { id: turn.id, origin: turn.origin };
+  } else if (activeTurn && activeTurn.id === turn.id) {
+    activeTurn = null;
+    // A finished turn with no superseding item leaves a dangling bubble
+    // (cancel/fail) — the error item or persisted message normally clears it.
+    if (turn.status !== "done" && liveBubble) {
+      liveBubble.classList.remove("streaming-cursor");
+      liveBubble = null;
+      liveTurnId = null;
+      setDot("connected");
+    }
+  }
+  renderComposerState();
+}
+
+function renderComposerState(): void {
+  if (!canSend) return;
+  if (activeTurn) {
+    if (activeTurn.origin === "web") {
+      $composerSend.textContent = "■";
+      $composerSend.classList.add("stop");
+      $composerSend.disabled = false;
+      $composerStatus.style.display = "none";
+    } else {
+      $composerSend.textContent = "➤";
+      $composerSend.classList.remove("stop");
+      $composerSend.disabled = true;
+      $composerStatus.style.display = "";
+      $composerStatus.className = "composer-status";
+      $composerStatus.textContent = "Mason desktop is responding…";
+    }
+    $composerInput.disabled = activeTurn.origin !== "web";
+  } else {
+    $composerSend.textContent = "➤";
+    $composerSend.classList.remove("stop");
+    $composerSend.disabled = false;
+    $composerInput.disabled = false;
+    $composerStatus.style.display = "none";
+  }
+}
+
+function composerError(msg: string): void {
+  $composerStatus.style.display = "";
+  $composerStatus.className = "composer-status error";
+  $composerStatus.textContent = msg;
+}
+
+async function loadModels(): Promise<void> {
+  try {
+    const res = await fetch(`${API}/models`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { models } = await res.json();
+    if (!models || models.length === 0) throw new Error("no models");
+    $composerModel.innerHTML = "";
+    for (const m of models) {
+      const opt = document.createElement("option");
+      opt.value = m.value;
+      opt.textContent = m.label;
+      $composerModel.appendChild(opt);
+    }
+    if (lastModel && models.some((m: any) => m.value === lastModel)) {
+      $composerModel.value = lastModel;
+    }
+    canSend = true;
+  } catch (_) {
+    // No user token reaches the server (user_api_scopes not configured, or
+    // local dev) — stay read-only with the watch footer.
+    canSend = false;
+  }
+}
+
+async function composerSubmit(): Promise<void> {
+  if (!currentSession) return;
+  if (activeTurn && activeTurn.origin === "web") {
+    // Stop.
+    await fetch(`${API}/turns/${encodeURIComponent(activeTurn.id)}/cancel`, { method: "POST" });
+    return;
+  }
+  const text = $composerInput.value.trim();
+  if (!text) return;
+  const model = $composerModel.value;
+  localStorage.setItem("mason-viewer-model", model);
+  $composerSend.disabled = true;
+  try {
+    const res = await fetch(`${API}/sessions/${encodeURIComponent(currentSession)}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, model }),
+    });
+    if (res.status === 409) {
+      const body = await res.json();
+      composerError(
+        body.active_turn?.origin === "desktop"
+          ? "Mason desktop is responding — try again when it finishes."
+          : "A turn is already running."
+      );
+      return;
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      composerError(body.error || `Send failed (HTTP ${res.status})`);
+      return;
+    }
+    $composerInput.value = "";
+    $composerInput.style.height = "auto";
+  } finally {
+    $composerSend.disabled = false;
+    renderComposerState();
+  }
+}
+
+$composerSend.addEventListener("click", composerSubmit);
+$composerInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    composerSubmit();
+  }
+});
+$composerInput.addEventListener("input", () => {
+  $composerInput.style.height = "auto";
+  $composerInput.style.height = `${Math.min($composerInput.scrollHeight, 120)}px`;
+});
+
 function showList(): void {
   currentSession = null;
+  activeTurn = null;
   es?.close();
   es = null;
   $transcript.style.display = "none";
   $footer.style.display = "none";
+  $composer.style.display = "none";
   $back.style.display = "none";
   $list.style.display = "";
   $title.textContent = "Mason";
@@ -249,3 +396,4 @@ $back.addEventListener("click", showList);
 // --- boot ---
 loadSessions();
 subscribeList();
+loadModels();
