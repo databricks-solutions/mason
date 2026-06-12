@@ -52,6 +52,13 @@ sync:
     # (or CI) and ship that instead.
     - package-lock.json
 
+# Runs as the deployer after every deploy: grants the app's service
+# principal USAGE+CREATE on schema public (idempotent). Without this the
+# app's table bootstrap fails with "permission denied for schema public".
+experimental:
+  scripts:
+    postdeploy: node scripts/grant-app-access.js
+
 targets:
   dev:
     mode: development
