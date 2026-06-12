@@ -1,0 +1,59 @@
+# DABs bundle for mason-sync: Lakebase project + branch + endpoint + the
+# Databricks App, bound together. One `databricks bundle deploy -t dev`
+# provisions everything. Pattern follows databricks-solutions/lakebase-fastapi-app.
+
+bundle:
+  name: mason-sync
+
+variables:
+  project_name:
+    description: Lakebase project id (single source of truth)
+    default: mason-sync
+  pg_database:
+    description: Postgres database name
+    default: databricks_postgres
+
+targets:
+  dev:
+    mode: development
+    default: true
+
+resources:
+  postgres_projects:
+    mason_sync_db:
+      project_id: ${var.project_name}
+      pg_version: 17
+      autoscaling:
+        min_cu: 0.5
+        max_cu: 2
+        suspend_timeout: 300s
+
+  postgres_branches:
+    production:
+      parent: ${resources.postgres_projects.mason_sync_db.id}
+      branch_id: production
+      replace_existing: true
+
+  postgres_endpoints:
+    primary:
+      parent: ${resources.postgres_branches.production.id}
+      endpoint_type: ENDPOINT_TYPE_READ_WRITE
+      autoscaling:
+        min_cu: 0.5
+        max_cu: 2
+
+  apps:
+    mason_sync:
+      name: mason-sync
+      description: "Session-sync server for Mason — mobile live viewer"
+      source_code_path: .
+      resources:
+        - name: mason-sync-db
+          postgres:
+            branch: ${resources.postgres_branches.production.id}
+            database: ${resources.postgres_branches.production.id}/databases/${var.pg_database}
+            permission: CAN_CONNECT_AND_CREATE
+      config:
+        env:
+          - name: ENDPOINT_NAME
+            value: ${resources.postgres_endpoints.primary.id}

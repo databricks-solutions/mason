@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self' https://*.cloud.databricks.com https://*.azuredatabricks.net https://*.staging.cloud.databricks.com https://*.databricksapps.com; frame-src https://*.cloud.databricks.com https://*.azuredatabricks.net https://*.staging.cloud.databricks.com; img-src 'self' data:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self' https://*.cloud.databricks.com https://*.azuredatabricks.net https://*.staging.cloud.databricks.com https://*.databricksapps.com http://localhost:* http://127.0.0.1:*; frame-src https://*.cloud.databricks.com https://*.azuredatabricks.net https://*.staging.cloud.databricks.com; img-src 'self' data:;">
     <title>Mason</title>
     <link id="hljs-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
     <link id="hljs-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" disabled />
@@ -359,6 +359,26 @@
             </div>
           </div>
           <div style="margin-bottom:18px;">
+            <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">Session Sync</div>
+            <div style="font-size:0.75rem;opacity:0.55;margin-bottom:8px;">Mirror chats to a mason-sync server so you can watch them live from your phone. Per-workspace; the desktop stays the source of truth.</div>
+            <input class="modal-input" id="syncUrlInput" type="url" placeholder="https://mason-sync-xxxx.aws.databricksapps.com" style="margin-bottom:8px;" />
+            <div class="settings-toggle-row">
+              <div>
+                <div style="font-size:0.85rem;font-weight:500;">Enable session sync</div>
+                <div style="font-size:0.75rem;opacity:0.45;">New messages mirror automatically while enabled</div>
+              </div>
+              <label class="settings-switch">
+                <input type="checkbox" id="syncEnabledToggle">
+                <span id="syncEnabledTrack" class="settings-switch-track"></span>
+                <span id="syncEnabledThumb" class="settings-switch-thumb"></span>
+              </label>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+              <button class="modal-btn secondary" id="syncBackfillBtn">Backfill existing chats</button>
+              <span id="syncStatus" style="font-size:0.72rem;opacity:0.55;"></span>
+            </div>
+          </div>
+          <div style="margin-bottom:18px;">
             <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;opacity:0.45;margin-bottom:6px;">System Prompt</div>
             <div style="font-size:0.75rem;opacity:0.55;margin-bottom:8px;">Prepended to every conversation. Sets persistent instructions or persona for all profiles.</div>
             <textarea
@@ -473,6 +493,7 @@
     <script src="build/ts/mcp.js"></script>
     <script src="build/ts/dashboards.js"></script>
     <script src="build/ts/onboarding.js"></script>
+    <script src="build/ts/sync.js"></script>
     <script src="build/ts/agent-runner.js"></script>
     <script src="build/ts/chat.js"></script>
     <script src="build/ts/workflow-engine.js"></script>

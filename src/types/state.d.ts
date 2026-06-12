@@ -112,6 +112,9 @@ declare global {
     disabledSkills: Set<string>;
     autoLoadSkills: boolean;
 
+    // Session sync (Phase 1 mirror mode) — per-workspace, default off
+    sessionSync: { url: string; enabled: boolean } | null;
+
     // Workflow designer
     workflows: MasonWorkflowSummary[];
     currentWorkflow: MasonWorkflow | null;

@@ -38,6 +38,9 @@ window.mason = {
   disabledSkills: new Set<string>(),
   autoLoadSkills: true,
 
+  // Session sync (mirror mode)
+  sessionSync: null,
+
   // Workflow designer
   workflows: [],
   currentWorkflow: null,

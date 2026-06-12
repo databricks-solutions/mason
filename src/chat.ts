@@ -238,6 +238,10 @@ async function send(): Promise<void> {
     inputEl.value = "";
     inputEl.style.height = "auto";
   }
+  // Assign the chat id up front (same derivation saveCurrentChat uses) so
+  // the sync publisher can attribute stream deltas of a brand-new chat.
+  if (!mason.currentChatId) mason.currentChatId = genId();
+
   mason.chatAborted = false;
   setGenerating(true);
   showThinking();
@@ -290,6 +294,8 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
     let streamingEl: HTMLElement | null = null;
     let streamedText = "";
     let typeTimer: ReturnType<typeof setTimeout> | null = null;
+    const syncTurnId = genId();
+    let syncSeq = 0;
 
     if (canStream) {
       let typeQueue = "";
@@ -349,6 +355,9 @@ async function chatLoop(_profile: { host?: string }): Promise<void> {
         }
         streamedText += chunk;
         typeQueue = streamedText;
+        // Mirror the in-progress turn to the sync server (throttled,
+        // best-effort, no-op when sync is disabled).
+        syncDelta(mason.currentChatId || "", syncTurnId, syncSeq++, streamedText);
         ensureTyping();
       });
     }

@@ -197,6 +197,8 @@ async function loadWorkspaceConfig(): Promise<void> {
   const config = ((await window.api.workspaceLoad(profile)) || {}) as any;
   mason.customEndpoints = config.customEndpoints || [];
   mason.defaultModel = config.defaultModel || null;
+  mason.sessionSync = config.sessionSync || null;
+  renderSyncSettings();
   const modelBtnLabel = mason.el.modelBtnLabel as HTMLElement | null;
   if (mason.defaultModel) {
     mason.selectedModelValue = mason.defaultModel.value;
@@ -204,6 +206,13 @@ async function loadWorkspaceConfig(): Promise<void> {
     if (modelBtnLabel) modelBtnLabel.textContent = mason.defaultModel.label;
   }
   await discoverModels();
+}
+
+function renderSyncSettings(): void {
+  const syncUrl = document.getElementById("syncUrlInput") as HTMLInputElement | null;
+  const syncToggle = document.getElementById("syncEnabledToggle") as HTMLInputElement | null;
+  if (syncUrl) syncUrl.value = mason.sessionSync?.url || "";
+  if (syncToggle) syncToggle.checked = !!mason.sessionSync?.enabled;
 }
 
 async function saveCustomEndpoints(): Promise<void> {
@@ -726,6 +735,49 @@ function initEventListeners(): void {
   if (darkToggle) darkToggle.checked = !!mason.settings?.darkMode;
   if (promptInput) promptInput.value = mason.settings?.systemPrompt || "";
   updateSystemPromptCount();
+
+  // Session sync (per-workspace; mirrors chats to a mason-sync server)
+  const syncUrl = document.getElementById("syncUrlInput") as HTMLInputElement | null;
+  const syncToggle = document.getElementById("syncEnabledToggle") as HTMLInputElement | null;
+  const syncBackfill = document.getElementById("syncBackfillBtn") as HTMLButtonElement | null;
+  const syncStatus = document.getElementById("syncStatus") as HTMLElement | null;
+  async function saveSyncConfig(): Promise<void> {
+    const url = (syncUrl?.value || "").trim().replace(/\/+$/, "");
+    const enabled = !!syncToggle?.checked && !!url;
+    mason.sessionSync = url ? { url, enabled } : null;
+    const profile = currentProfileName();
+    const config = ((await window.api.workspaceLoad(profile)) || {}) as any;
+    config.sessionSync = mason.sessionSync;
+    await window.api.workspaceSave({ profile, config });
+  }
+  syncUrl?.addEventListener("change", saveSyncConfig);
+  syncToggle?.addEventListener("change", async () => {
+    if (syncToggle.checked && !(syncUrl?.value || "").trim()) {
+      syncToggle.checked = false;
+      if (syncStatus) syncStatus.textContent = "Enter the server URL first.";
+      return;
+    }
+    await saveSyncConfig();
+    if (syncStatus) syncStatus.textContent = syncToggle.checked ? "Sync enabled." : "Sync disabled.";
+  });
+  syncBackfill?.addEventListener("click", async () => {
+    if (!mason.sessionSync?.url) {
+      if (syncStatus) syncStatus.textContent = "Enter the server URL first.";
+      return;
+    }
+    syncBackfill.disabled = true;
+    try {
+      const result = await syncBackfillAll((done, total) => {
+        if (syncStatus) syncStatus.textContent = `Backfilling ${done}/${total}…`;
+      });
+      if (syncStatus)
+        syncStatus.textContent = `Backfill done — ${result.pushed} pushed${result.failed ? `, ${result.failed} failed` : ""}.`;
+    } catch (e) {
+      if (syncStatus) syncStatus.textContent = `Backfill failed: ${(e as Error).message}`;
+    } finally {
+      syncBackfill.disabled = false;
+    }
+  });
 
   // Dashboard nav tabs
   (el.navChats as HTMLElement | null)?.addEventListener("click", switchToChatsTab);

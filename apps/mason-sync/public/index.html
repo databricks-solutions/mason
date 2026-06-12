@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self'; img-src 'self' data:;" />
+  <title>Mason</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+  <link rel="stylesheet" href="viewer.css" />
+</head>
+<body>
+  <header class="topbar">
+    <button id="backBtn" class="back-btn" style="display:none;" aria-label="Back to sessions">&#8249;</button>
+    <h1 id="topTitle">Mason</h1>
+    <span id="liveDot" class="live-dot" title="Connected"></span>
+  </header>
+
+  <main id="sessionList" class="session-list"></main>
+
+  <main id="transcript" class="transcript" style="display:none;"></main>
+
+  <footer id="watchFooter" class="watch-footer" style="display:none;">
+    Watching live &middot; send from Mason desktop
+  </footer>
+
+  <script src="viewer.js"></script>
+</body>
+</html>

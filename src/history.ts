@@ -28,6 +28,7 @@ async function refreshHistory(): Promise<void> {
     div.querySelector(".history-item-delete")!.addEventListener("click", async (e) => {
       e.stopPropagation();
       await window.api.historyDelete(item.id);
+      syncSessionDelete(item.id);
       if (mason.currentChatId === item.id) newChat();
       refreshHistory();
     });
@@ -78,5 +79,7 @@ async function saveCurrentChat(): Promise<void> {
     model: mason.selectedModelValue,
     messages: mason.history,
   });
+  // Mirror to the session-sync server (fire-and-forget; no-op when disabled).
+  syncCatchUp(mason.currentChatId, title, mason.selectedModelLabel);
   refreshHistory();
 }
