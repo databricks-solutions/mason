@@ -1,12 +1,17 @@
 # Databricks App runtime config for mason-sync.
-# Project/database names live in databricks.yml — the app resource binding
-# injects PGHOST/PGDATABASE/PGUSER/PGSSLMODE; ENDPOINT_NAME arrives via the
-# bundle's app config. Only stable tuning lives here.
+# The app resource binding injects PGHOST/PGDATABASE/PGUSER/PGSSLMODE.
+#
+# ENDPOINT_NAME lives HERE (not only in databricks.yml config.env) because
+# app.yaml ships with the source snapshot and survives every deployment
+# path — `databricks apps update` calls clobber the app-level config.env
+# (observed: scope updates wiped it and the app crash-looped on start).
 command:
   - node
   - build/src/server.js
 
 env:
+  - name: ENDPOINT_NAME
+    value: 'projects/mason-sync/branches/production/endpoints/primary'
   - name: DB_POOL_SIZE
     value: '5'
   - name: LOG_LEVEL
