@@ -193,8 +193,8 @@ function syncMapEntry(chatId: string, index: number, entry: any): WireItem[] {
 // --- public hooks (call sites in history.ts / chat.ts / app.ts) ---
 
 // Mirrors the session row + any history entries not yet synced. Called from
-// saveCurrentChat() — i.e. after every completed turn, on autosave, and on
-// rename. Safe to call repeatedly.
+// saveCurrentChat() — i.e. after every completed turn and on autosave. Safe
+// to call repeatedly.
 function syncCatchUp(chatId: string, title: string, modelLabel: string): void {
   if (!syncEnabled() || !chatId) return;
   syncEnqueue({
@@ -228,6 +228,11 @@ function syncSessionDelete(chatId: string): void {
   if (!syncEnabled()) return;
   syncState.syncedIndex.delete(chatId);
   syncEnqueue({ path: `/sessions/${chatId}`, method: "DELETE" });
+}
+
+function syncSessionRename(chatId: string, title: string): void {
+  if (!syncEnabled() || !chatId) return;
+  syncEnqueue({ path: `/sessions/${chatId}`, method: "PUT", body: { title } });
 }
 
 // Live stream deltas — best-effort, throttled, never queued (a stale delta
