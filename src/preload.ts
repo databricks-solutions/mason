@@ -18,6 +18,7 @@ const api: MasonApi = {
   historyList: () => ipcRenderer.invoke("history-list"),
   historyLoad: (id) => ipcRenderer.invoke("history-load", id),
   historySave: (data) => ipcRenderer.invoke("history-save", data),
+  historyRename: (data) => ipcRenderer.invoke("history-rename", data),
   historyDelete: (id) => ipcRenderer.invoke("history-delete", id),
 
   builtinToolCall: (params) => ipcRenderer.invoke("builtin-tool-call", params),

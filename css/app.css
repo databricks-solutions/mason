@@ -104,20 +104,43 @@
       }
       .history-item:hover { background: var(--control-hover); }
       .history-item.active { background: var(--control-active); font-weight: 500; }
-      .history-item-title { overflow: hidden; text-overflow: ellipsis; }
-      .history-item-delete {
+      .history-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      .history-item-actions {
         display: none;
+        align-items: center;
+        gap: 2px;
+        flex-shrink: 0;
+      }
+      .history-item:hover .history-item-actions { display: flex; }
+      .history-item.renaming { cursor: text; background: var(--control-active); }
+      .history-item.renaming .history-item-actions { display: none; }
+      .history-item-rename,
+      .history-item-delete {
         background: none;
         border: none;
         color: #999;
         font-size: 0.75rem;
         cursor: pointer;
-        padding: 2px 4px;
-        border-radius: 4px;
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
         flex-shrink: 0;
       }
-      .history-item:hover .history-item-delete { display: block; }
+      .history-item-rename:hover { color: inherit; background: var(--control-active); }
       .history-item-delete:hover { color: #c00; background: var(--control-danger-hover); }
+      .history-item-rename-input {
+        flex: 1;
+        min-width: 0;
+        padding: 3px 6px;
+        border: none;
+        border-radius: 6px;
+        outline: none;
+        background: #fff;
+        color: inherit;
+        font: inherit;
+        box-shadow: 0 0 0 1px #007aff;
+      }
+      body.dark .history-item-rename-input { background: #222; }
 
       /* Sidebar nav tabs */
       .sidebar-nav {

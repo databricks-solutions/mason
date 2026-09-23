@@ -10,7 +10,15 @@ class FakeElement {
     this.listeners = new Map();
     this.parent = null;
     this.className = "";
+    this.classList = {
+      contains: (name) => this.className.split(/\s+/).includes(name),
+      add: (name) => {
+        if (!this.classList.contains(name)) this.className = `${this.className} ${name}`.trim();
+      },
+    };
     this.textContent = "";
+    this.type = "";
+    this.value = "";
     this.scrollHeight = 500;
     this.scrollTop = 0;
     this.appendCount = 0;
@@ -23,10 +31,16 @@ class FakeElement {
     if (value.includes("history-item-title")) {
       const title = new FakeElement("span");
       title.className = "history-item-title";
+      const actions = new FakeElement("span");
+      actions.className = "history-item-actions";
+      const renameButton = new FakeElement("button");
+      renameButton.className = "history-item-rename";
       const deleteButton = new FakeElement("button");
       deleteButton.className = "history-item-delete";
       this.appendChild(title);
-      this.appendChild(deleteButton);
+      actions.appendChild(renameButton);
+      actions.appendChild(deleteButton);
+      this.appendChild(actions);
     }
   }
 
@@ -43,8 +57,23 @@ class FakeElement {
 
   querySelector(selector) {
     const className = selector.startsWith(".") ? selector.slice(1) : selector;
-    return this.children.find((child) => child.className === className) || null;
+    for (const child of this.children) {
+      if (child.className.split(/\s+/).includes(className)) return child;
+      const nested = child.querySelector(selector);
+      if (nested) return nested;
+    }
+    return null;
   }
+
+  replaceWith(replacement) {
+    const index = this.parent.children.indexOf(this);
+    replacement.parent = this.parent;
+    this.parent.children[index] = replacement;
+  }
+
+  setAttribute() {}
+  focus() {}
+  select() {}
 
   addEventListener(type, handler) {
     const handlers = this.listeners.get(type) || [];
@@ -58,6 +87,15 @@ class FakeElement {
     for (const handler of this.listeners.get("click") || []) await handler(event);
     if (!stopped && this.parent) await this.parent.click();
   }
+
+  async keydown(key) {
+    const event = {
+      key,
+      preventDefault: () => {},
+      stopPropagation: () => {},
+    };
+    for (const handler of this.listeners.get("keydown") || []) await handler(event);
+  }
 }
 
 function runScript(file, context) {
@@ -68,6 +106,7 @@ async function testHistoryRowClick() {
   const list = new FakeElement("div");
   let loadedId = null;
   let deletedId = null;
+  let renamed = null;
   const context = vm.createContext({
     console,
     mason: {
@@ -85,6 +124,10 @@ async function testHistoryRowClick() {
           loadedId = id;
           return { messages: [] };
         },
+        historyRename: async (data) => {
+          renamed = data;
+          return { ok: true, title: data.title };
+        },
         historyDelete: async (id) => { deletedId = id; },
       },
     },
@@ -95,6 +138,7 @@ async function testHistoryRowClick() {
     selectModelByValue: () => {},
     switchToChatsTab: () => {},
     syncLiveAttach: () => {},
+    syncSessionRename: () => {},
     syncSessionDelete: () => {},
     newChat: () => {},
     genId: () => "generated",
@@ -107,7 +151,18 @@ async function testHistoryRowClick() {
   assert.equal(loadedId, "long-chat", "clicking the row should load the chat");
 
   loadedId = null;
-  await row.querySelector(".history-item-delete").click();
+  await row.querySelector(".history-item-rename").click();
+  const input = row.querySelector(".history-item-rename-input");
+  input.value = "House planning";
+  await input.keydown("Enter");
+  assert.equal(renamed.id, "long-chat");
+  assert.equal(renamed.title, "House planning");
+  assert.equal(loadedId, null, "rename click must not also load the chat");
+
+  await context.refreshHistory();
+  const refreshedRow = list.children[0];
+  loadedId = null;
+  await refreshedRow.querySelector(".history-item-delete").click();
   assert.equal(deletedId, "long-chat", "delete should still remove the chat");
   assert.equal(loadedId, null, "delete click must not also load the chat");
 }

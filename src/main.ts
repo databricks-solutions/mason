@@ -237,8 +237,41 @@ ipcMain.handle("history-load", (_event: IpcMainInvokeEvent, id: string) => {
 
 ipcMain.handle("history-save", (_event: IpcMainInvokeEvent, { id, title, model, messages }: any) => {
   ensureHistoryDir();
-  const data = { title, model, messages, updatedAt: new Date().toISOString() };
-  fs.writeFileSync(path.join(HISTORY_DIR, `${id}.json`), JSON.stringify(data, null, 2));
+  const filePath = path.join(HISTORY_DIR, `${id}.json`);
+  let existing: any = null;
+  if (fs.existsSync(filePath)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    } catch (_) {}
+  }
+  const savedTitle = existing?.titleLocked && existing.title ? existing.title : title;
+  const data = {
+    title: savedTitle,
+    model,
+    messages,
+    updatedAt: new Date().toISOString(),
+    ...(existing?.titleLocked ? { titleLocked: true } : {}),
+  };
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  return { ok: true, title: savedTitle };
+});
+
+ipcMain.handle("history-rename", (_event: IpcMainInvokeEvent, { id, title }: any) => {
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id || "")) {
+    return { ok: false, error: "Invalid chat id" };
+  }
+  const nextTitle = typeof title === "string" ? title.trim().slice(0, 120) : "";
+  if (!nextTitle) return { ok: false, error: "Chat title cannot be empty" };
+
+  const filePath = path.join(HISTORY_DIR, `${id}.json`);
+  if (!fs.existsSync(filePath)) return { ok: false, error: "Chat not found" };
+
+  const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  data.title = nextTitle;
+  data.titleLocked = true;
+  // Preserve updatedAt so renaming does not move an old chat to the top.
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  return { ok: true, title: nextTitle };
 });
 
 ipcMain.handle("history-delete", (_event: IpcMainInvokeEvent, id: string) => {

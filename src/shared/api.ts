@@ -60,6 +60,11 @@ export interface HistorySaveParams {
   messages: unknown[];
 }
 
+export interface HistoryRenameParams {
+  id: string;
+  title: string;
+}
+
 export interface AddProfileParams {
   name: string;
   host: string;
@@ -229,7 +234,8 @@ export interface MasonApi {
   // History
   historyList(): Promise<HistoryEntry[]>;
   historyLoad(id: string): Promise<{ id: string; title?: string; model?: unknown; messages: unknown[] } | null>;
-  historySave(data: HistorySaveParams): Promise<{ ok: boolean }>;
+  historySave(data: HistorySaveParams): Promise<{ ok: boolean; title?: string }>;
+  historyRename(data: HistoryRenameParams): Promise<{ ok: boolean; title?: string; error?: string }>;
   historyDelete(id: string): Promise<{ ok: boolean }>;
 
   // Built-in tools
