@@ -74,11 +74,7 @@ function removeThinking(): void {
   if (el) el.remove();
 }
 
-function addMessageEl(role: string, text: string): void {
-  removeThinking();
-  clearWelcome();
-  const messagesEl = mason.el.messages as HTMLElement | null;
-  if (!messagesEl) return;
+function createMessageEl(role: string, text: string): HTMLDivElement {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
   if (role === "assistant") {
@@ -86,6 +82,15 @@ function addMessageEl(role: string, text: string): void {
   } else {
     div.textContent = text;
   }
+  return div;
+}
+
+function addMessageEl(role: string, text: string): void {
+  removeThinking();
+  clearWelcome();
+  const messagesEl = mason.el.messages as HTMLElement | null;
+  if (!messagesEl) return;
+  const div = createMessageEl(role, text);
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -99,16 +104,21 @@ function renderMessages(): void {
     showWelcome();
     return;
   }
+  // Build the restored transcript off-DOM, then insert and scroll once. The
+  // old per-message append + scroll forced repeated layout as chats grew.
+  const fragment = document.createDocumentFragment();
   for (const m of history) {
     if (m.role === "system") continue;
     if (m.role === "tool") {
       const content =
         typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-      addMessageEl("tool-call", `Tool result (${m.name}): ${content}`);
+      fragment.appendChild(createMessageEl("tool-call", `Tool result (${m.name}): ${content}`));
     } else {
-      addMessageEl(m.role, (m.content as string) || "");
+      fragment.appendChild(createMessageEl(m.role, (m.content as string) || ""));
     }
   }
+  messagesEl.appendChild(fragment);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 interface AskUserQuestion {

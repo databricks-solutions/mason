@@ -24,7 +24,9 @@ async function refreshHistory(): Promise<void> {
       <span class="history-item-title">${escapeHtml(item.title)}</span>
       <button class="history-item-delete" title="Delete">&times;</button>
     `;
-    div.querySelector(".history-item-title")!.addEventListener("click", () => loadChat(item.id));
+    // The row is styled as the click target, so make the whole row behave like
+    // one. Short titles otherwise leave most of the visible row inert.
+    div.addEventListener("click", () => loadChat(item.id));
     div.querySelector(".history-item-delete")!.addEventListener("click", async (e) => {
       e.stopPropagation();
       await window.api.historyDelete(item.id);
